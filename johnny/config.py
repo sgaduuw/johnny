@@ -1,0 +1,3 @@
+
+class FlaskConfig:
+    DEBUG = True
