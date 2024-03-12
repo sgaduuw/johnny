@@ -11,6 +11,14 @@ case "$1" in
       /usr/local/bin/flask --app johnny:create_app run --host 0.0.0.0 --port 8000
     fi
   ;;
+  worker)
+    echo "WORKER"
+    celery -A johnny.tasks:clry worker
+  ;;
+  scheduler)
+    echo "SCHEDULER"
+    celery -A johnny.tasks:clry beat -s /tmp/celerybeat-schedule
+  ;;
   bash)
     bash
   ;;
