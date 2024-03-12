@@ -32,6 +32,4 @@ def register_blueprints(app) -> None:
     return None
 
 
-if __name__ == 'main':
-    app = create_app()
-    app.run()
+app = create_app()
