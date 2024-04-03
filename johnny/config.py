@@ -14,3 +14,4 @@ class Celery:
 
 class FlaskConfig(Celery):
     DEBUG = env.bool('FLASK_DEBUG')
+    SECRET_KEY = env.str('SECRET_KEY')
