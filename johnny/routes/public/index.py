@@ -11,6 +11,6 @@ def index():
 
     # remove id from result, it is not JSON serializable
     for a in l_ansible:
-        a.pop('id')
+        del a['id']
 
     return jsonify(l_ansible)
