@@ -21,7 +21,8 @@ def create_app() -> Flask:
         database=c_mongo.johnny,
         document_models=[
             'johnny.models.Group',
-            'johnny.models.Ansible'
+            'johnny.models.Ansible',
+            'johnny.models.User'
         ],
         recreate_views=True
     )
