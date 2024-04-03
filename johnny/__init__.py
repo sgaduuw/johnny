@@ -38,6 +38,7 @@ def register_extensions(app: Flask) -> None:
     login_manager.login_view = 'auth.login'
     return None
 
+
 def register_blueprints(app: Flask) -> None:
     """ Register Flask blueprints. """
     app.register_blueprint(public)
