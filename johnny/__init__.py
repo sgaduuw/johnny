@@ -5,6 +5,7 @@ from pymongo import MongoClient
 
 from johnny.config import FlaskConfig
 from johnny.extensions import bootstrap, csrf, debug_toolbar, login_manager
+from johnny.routes.auth import auth_bp
 from johnny.routes.public import public
 
 env = Env()
@@ -40,6 +41,7 @@ def register_extensions(app: Flask) -> None:
 def register_blueprints(app: Flask) -> None:
     """ Register Flask blueprints. """
     app.register_blueprint(public)
+    app.register_blueprint(auth_bp)
     return None
 
 
