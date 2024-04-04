@@ -1,24 +1,75 @@
-<!doctype html>
+<!--
+* Tabler - Premium and Open Source dashboard template with responsive and high quality UI.
+* @version 1.0.0-beta20
+* @link https://tabler.io
+* Copyright 2018-2023 The Tabler Authors
+* Copyright 2018-2023 codecalm.net Paweł Kuna
+* Licensed under MIT (https://github.com/tabler/tabler/blob/master/LICENSE)
+-->
 <html lang="en">
-<head>
-    {% block head %}
-        <!-- Required meta tags -->
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+    <meta http-equiv="X-UA-Compatible" content="ie=edge"/>
+    <title>Dashboard - Tabler - Premium and Open Source dashboard template with responsive and high quality UI.</title>
+    <meta name="msapplication-TileColor" content="#0054a6"/>
+    <meta name="theme-color" content="#0054a6"/>
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+    <meta name="apple-mobile-web-app-capable" content="yes"/>
+    <meta name="mobile-web-app-capable" content="yes"/>
+    <meta name="HandheldFriendly" content="True"/>
+    <meta name="MobileOptimized" content="320"/>
+    <link rel="icon" href="./favicon.ico" type="image/x-icon"/>
+    <link rel="shortcut icon" href="./favicon.ico" type="image/x-icon"/>
+    <meta name="description" content="Tabler comes with tons of well-designed components and features. Start your adventure with Tabler and make your dashboard great again. For free!"/>
 
-        {% block styles %}
-            {{ bootstrap.load_css() }}
-        {% endblock %}
-        <title>{% block title %}Your page title{% endblock %}</title>
-    {% endblock %}
-</head>
-<body>
-<!-- Your page content -->
-{% block content %}{% endblock %}
+    <!-- CSS files -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css" integrity="sha256-lS3nKxMMZiKIRJG7UgUonOHYuvHgW5eckEjvHMYxb9Q=" crossorigin="anonymous">
 
-{% block scripts %}
-    <!-- Optional JavaScript -->
-    {{ bootstrap.load_js() }}
-{% endblock %}
-</body>
+  </head>
+  <body >
+    <div class="page">
+      <!-- Navbar -->
+
+      <div class="sticky-top">
+          {% include "_snippets/nav_top_01.j2" %}
+          {% include "_snippets/nav_top_02.j2" %}
+      </div>
+
+      <div class="page-wrapper">
+        <!-- Page header -->
+        <div class="page-header d-print-none">
+          <div class="container-xl">
+            <div class="row g-2 align-items-center">
+
+                <div class="col">
+                <!-- Page pre-title -->
+                <div class="page-pretitle">Overview</div>
+                <h2 class="page-title">Navbar sticky</h2>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+          <!-- Page body -->
+        <div class="page-body">
+          <div class="container-xl">
+
+              {% block content %}
+              	Base content
+              {% endblock %}
+
+          </div>
+        </div>
+
+        {% include "_snippets/footer.j2" %}
+
+      </div>
+    </div>
+
+    <!-- Tabler Core -->
+    <script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/js/tabler.min.js" integrity="sha256-ygO5OTRUtYxDDkERRwBCfq+fmakhM6ybwfl6gCCPlAQ=" crossorigin="anonymous"></script>
+
+  </body>
 </html>
