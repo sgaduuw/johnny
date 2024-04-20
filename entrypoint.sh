@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+if [ $FLASK_DEBUG -eq 1 ]; then
+  CELERY_LOG_OPTIONS="-l DEBUG"
+fi
+
 case "$1" in
 
   johnny)
@@ -15,12 +19,12 @@ case "$1" in
 
   worker)
     echo "WORKER"
-    celery -A johnny.tasks:clry worker
+    celery -A johnny.tasks:clry worker ${CELERY_LOG_OPTIONS}
   ;;
 
   scheduler)
     echo "SCHEDULER"
-    celery -A johnny.tasks:clry beat -s /tmp/celerybeat-schedule
+    celery -A johnny.tasks:clry beat -s /tmp/celerybeat-schedule ${CELERY_LOG_OPTIONS}
   ;;
 
   bash)
