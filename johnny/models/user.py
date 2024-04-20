@@ -10,6 +10,8 @@ class User(UserMixin, Document):
     email: EmailStr
     username: str
     password_hash: str
+    name_first: str
+    name_last: str
     created_at: datetime = datetime.now
     updated_at: datetime = datetime.now
 
