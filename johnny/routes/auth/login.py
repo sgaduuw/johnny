@@ -13,7 +13,6 @@ def load_user(user_id):
 
 @auth_bp.route('/login/', methods=['GET', 'POST'])
 def login():
-    from flask import current_app
 
     match request.method:
         case 'POST':
