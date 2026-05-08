@@ -35,6 +35,7 @@ COPY alembic ./alembic
 COPY alembic.ini ./
 COPY tests ./tests
 
+COPY README.md ./
 RUN pip install --no-cache-dir --no-deps -e .
 
 CMD ["pytest", "--cov=johnny", "--cov-report=term", "--cov-fail-under=85"]
@@ -51,6 +52,7 @@ COPY alembic.ini ./
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+COPY README.md ./
 RUN pip install --no-cache-dir --no-deps -e .
 
 ARG UID=10001
