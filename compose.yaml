@@ -5,13 +5,19 @@
 # johnny-tasks owns alembic + retention pruning. johnny-web and
 # johnny-api both depend on its healthcheck (the migration sentinel
 # file), so they only start once the schema is current.
+#
+# Image: pulls from ghcr.io/sgaduuw/johnny by default. Pin a version
+# via JOHNNY_VERSION (e.g. JOHNNY_VERSION=0.1.0 docker compose up).
+# `build:` is on johnny-tasks only so `docker compose build` still
+# produces a local image with the same name; the other services
+# share it via image: alone.
 
 services:
   johnny-tasks:
     build:
       context: .
       target: prod
-    image: johnny:dev
+    image: ghcr.io/sgaduuw/johnny:${JOHNNY_VERSION:-0.1.0}
     command: tasks
     restart: unless-stopped
     volumes:
@@ -28,7 +34,7 @@ services:
       start_period: 30s
 
   johnny-api:
-    image: johnny:dev
+    image: ghcr.io/sgaduuw/johnny:${JOHNNY_VERSION:-0.1.0}
     command: api
     restart: unless-stopped
     volumes:
@@ -43,7 +49,7 @@ services:
         condition: service_healthy
 
   johnny-web:
-    image: johnny:dev
+    image: ghcr.io/sgaduuw/johnny:${JOHNNY_VERSION:-0.1.0}
     command: web
     restart: unless-stopped
     volumes:

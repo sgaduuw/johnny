@@ -7,6 +7,12 @@ on:
   pull_request:
     branches: [main]
 
+# Opt every JS-action invocation into Node 24 ahead of GitHub's
+# 2026-06-02 forced switch. Lets us catch any incompatibilities
+# now rather than on the day GitHub flips the default.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -59,7 +65,7 @@ jobs:
       # Always build the test stage (loaded into the local docker
       # daemon) so we can run pytest inside the image.
       - name: Build test stage
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           target: test
@@ -98,7 +104,7 @@ jobs:
             type=ref,event=pr
 
       - name: Build + push prod stage
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           target: prod
