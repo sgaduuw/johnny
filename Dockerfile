@@ -35,7 +35,7 @@ COPY alembic ./alembic
 COPY alembic.ini ./
 COPY tests ./tests
 
-RUN poetry install --only-root
+RUN pip install --no-cache-dir --no-deps -e .
 
 CMD ["pytest", "--cov=johnny", "--cov-report=term", "--cov-fail-under=85"]
 
@@ -51,7 +51,7 @@ COPY alembic.ini ./
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-RUN poetry install --only-root
+RUN pip install --no-cache-dir --no-deps -e .
 
 ARG UID=10001
 RUN useradd --uid ${UID} --create-home --shell /usr/sbin/nologin johnny \
