@@ -20,13 +20,17 @@ SENTINEL="${MIGRATION_SENTINEL:-/data/.migrated}"
 
 case "${1:-}" in
   web)
+    # gunicorn defaults to no access log; force both streams to stdout/
+    # stderr so `docker compose logs johnny-web` shows per-request lines.
     exec gunicorn -w "${WEB_WORKERS}" -b "0.0.0.0:${WEB_PORT}" \
+        --access-logfile - --error-logfile - \
         'johnny.web:create_app()'
     ;;
 
   api)
     exec uvicorn 'johnny.api:create_app' --factory \
-        --host 0.0.0.0 --port "${API_PORT}" --workers "${API_WORKERS}"
+        --host 0.0.0.0 --port "${API_PORT}" --workers "${API_WORKERS}" \
+        --log-level info --access-log
     ;;
 
   tasks)
