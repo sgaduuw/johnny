@@ -1,7 +1,7 @@
 # johnny
 
 [![ci](https://github.com/sgaduuw/johnny/actions/workflows/ci.yml/badge.svg)](https://github.com/sgaduuw/johnny/actions/workflows/ci.yml)
-[![ghcr](https://ghcr-badge.egpl.dev/sgaduuw/johnny/latest_tag?label=ghcr&color=blue)](https://github.com/sgaduuw/johnny/pkgs/container/johnny)
+[![ghcr](https://ghcr-badge.egpl.dev/sgaduuw/johnny/latest_tag?ignore=sha-*&label=ghcr&color=blue)](https://github.com/sgaduuw/johnny/pkgs/container/johnny)
 
 A web app for browsing the **state of an Ansible-managed fleet**.
 Hosts push their facts and play results to johnny via a callback
