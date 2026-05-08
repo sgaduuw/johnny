@@ -118,6 +118,8 @@ Loaded from `.env` (gitignored) or shell environment.
 | `DATABASE_URL`          | all three containers  | `sqlite:////data/johnny.db`   |
 | `JOHNNY_API_TOKEN`      | `johnny-api` only     | required (no default)         |
 | `JOHNNY_VERSION`        | host (compose lookup) | `0.1.0`                       |
+| `WEB_WORKERS`           | `johnny-web`          | `$(nproc)` inside container   |
+| `API_WORKERS`           | `johnny-api`          | `1` (SQLite-safe; bump on PG) |
 | `RETENTION_DAYS`        | `johnny-tasks`        | `30`                          |
 | `PRUNE_INTERVAL_SECONDS`| `johnny-tasks`        | `86400` (24 h)                |
 | `WEB_PORT`              | host (compose port)   | `8000`                        |

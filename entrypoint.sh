@@ -7,18 +7,26 @@ set -euo pipefail
 
 WEB_PORT="${WEB_PORT:-8000}"
 API_PORT="${API_PORT:-8001}"
+# Worker counts. Web defaults to one per CPU since it's read-only and
+# WAL handles concurrent readers. Api defaults to 1 because SQLite is
+# a single-writer engine and concurrent gunicorn/uvicorn workers will
+# contend on the WAL lock; bump only when the DB is Postgres or when
+# you have measured contention. See CONTEXT.md "Container split".
+WEB_WORKERS="${WEB_WORKERS:-$(nproc)}"
+API_WORKERS="${API_WORKERS:-1}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
 PRUNE_INTERVAL_SECONDS="${PRUNE_INTERVAL_SECONDS:-86400}"
 SENTINEL="${MIGRATION_SENTINEL:-/data/.migrated}"
 
 case "${1:-}" in
   web)
-    exec gunicorn -w "$(nproc)" -b "0.0.0.0:${WEB_PORT}" 'johnny.web:create_app()'
+    exec gunicorn -w "${WEB_WORKERS}" -b "0.0.0.0:${WEB_PORT}" \
+        'johnny.web:create_app()'
     ;;
 
   api)
     exec uvicorn 'johnny.api:create_app' --factory \
-        --host 0.0.0.0 --port "${API_PORT}"
+        --host 0.0.0.0 --port "${API_PORT}" --workers "${API_WORKERS}"
     ;;
 
   tasks)

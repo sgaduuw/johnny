@@ -42,6 +42,8 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/johnny.db
       JOHNNY_API_TOKEN: ${JOHNNY_API_TOKEN:?JOHNNY_API_TOKEN must be set}
+      # Defaults to 1 (SQLite single-writer); bump on Postgres.
+      API_WORKERS: ${API_WORKERS:-}
     ports:
       - "${API_PORT:-8001}:8001"
     depends_on:
@@ -56,6 +58,8 @@ services:
       - johnny-data:/data
     environment:
       DATABASE_URL: sqlite:////data/johnny.db
+      # Defaults to $(nproc) inside the container.
+      WEB_WORKERS: ${WEB_WORKERS:-}
     ports:
       - "${WEB_PORT:-8000}:8000"
     depends_on:
