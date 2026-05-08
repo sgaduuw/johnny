@@ -8,7 +8,9 @@
 
 services:
   johnny-tasks:
-    build: .
+    build:
+      context: .
+      target: prod
     image: johnny:dev
     command: tasks
     restart: unless-stopped
