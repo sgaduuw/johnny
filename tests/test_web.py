@@ -9,7 +9,7 @@ not pixel-level UX regressions.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Iterator
+from typing import Iterator
 from uuid import uuid4
 
 import pytest
