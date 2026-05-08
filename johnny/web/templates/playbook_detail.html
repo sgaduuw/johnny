@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}{{ play.name }} | johnny{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="{{ url_for('playbooks_list') }}">playbooks</a></li>
+    <li>{{ play.name }}</li>
+  </ul>
+</nav>
+
+<hgroup>
+  <h2>{{ play.name }}</h2>
+  <p>
+    <span class="play-status-{{ play.status.value }}">{{ play.status.value }}</span>
+    · started <span title="{{ play.started_at }}">{{ play.started_at | naturaltime }}</span>
+    by <code>{{ play.user }}</code>
+    {% if play.finished_at %}
+      · finished <span title="{{ play.finished_at }}">{{ play.finished_at | naturaltime }}</span>
+    {% endif %}
+    · inventory {{ play.inventory_sources | join(', ') }}
+    {% if play.limit %} · limit <code>{{ play.limit }}</code>{% endif %}
+    {% if play.tags %} · tags {{ play.tags | join(',') }}{% endif %}
+    {% if play.check_mode %} · <strong>check mode</strong>{% endif %}
+  </p>
+</hgroup>
+
+<h3>Roster <small>({{ roster|length }})</small></h3>
+{% if roster %}
+<table>
+  <thead><tr><th scope="col">Host</th><th scope="col">inventory_hostname</th><th scope="col">Groups</th></tr></thead>
+  <tbody>
+  {% for m in roster %}
+    <tr>
+      <td><a href="{{ url_for('host_detail', fqdn=m.host.fqdn) }}">{{ m.host.fqdn }}</a></td>
+      <td><code>{{ m.inventory_hostname }}</code></td>
+      <td><small>{{ m.groups | join(', ') }}</small></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No roster recorded (no facts batch arrived for this playbook).</em></p>
+{% endif %}
+
+<h3>Events <small>({{ events|length }})</small></h3>
+{% if events %}
+<figure>
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Started</th>
+        <th scope="col">Host</th>
+        <th scope="col">Task</th>
+        <th scope="col">Action</th>
+        <th scope="col">Status</th>
+        <th scope="col">Duration</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for e in events %}
+      <tr>
+        <td><small title="{{ e.started_at }}">{{ e.started_at | naturaltime }}</small></td>
+        <td><a href="{{ url_for('host_detail', fqdn=e.host.fqdn) }}">{{ e.host.fqdn }}</a></td>
+        <td>{{ e.task_name }}</td>
+        <td><code>{{ e.task_action }}</code></td>
+        <td><span class="play-status-{{ 'failed' if e.status.value in ('failed', 'unreachable') else 'finished' }}">{{ e.status.value }}</span></td>
+        <td>{{ e.duration_ms }}ms</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</figure>
+{% else %}
+<p><em>No events recorded.</em></p>
+{% endif %}
+
+{% if play.stats %}
+<h3>Stats</h3>
+<pre><code>{{ play.stats | tojson(indent=2) }}</code></pre>
+{% endif %}
+{% endblock %}

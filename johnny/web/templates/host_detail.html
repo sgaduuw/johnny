@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ host.fqdn }} | johnny{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="{{ url_for('index') }}">hosts</a></li>
+    <li>{{ host.fqdn }}</li>
+  </ul>
+</nav>
+
+<hgroup>
+  <h2>{{ host.fqdn }}</h2>
+  <p>
+    Last seen <span title="{{ host.last_seen_at }}">{{ host.last_seen_at | naturaltime }}</span>
+    {% if host.last_seen_at and host.uptime_seconds %}
+      · uptime {{ host.uptime_seconds | uptime }}
+      <small data-tooltip="snapshot at facts-gather time, not corrected for elapsed time">(snapshot)</small>
+    {% endif %}
+  </p>
+</hgroup>
+
+<div class="grid">
+  <article>
+    <small>IPv4</small>
+    <h4><code>{{ host.default_ipv4 or '—' }}</code></h4>
+  </article>
+  <article>
+    <small>Virt</small>
+    <h4>{{ host.virt_role or '—' }}{% if host.virt_type and host.virt_type != 'NA' %} / {{ host.virt_type }}{% endif %}</h4>
+  </article>
+  <article>
+    <small>Memory</small>
+    <h4>{{ host.memtotal_mb | mem_gb }}</h4>
+  </article>
+  <article>
+    <small>vCPUs</small>
+    <h4>{{ host.vcpus or '—' }}</h4>
+  </article>
+</div>
+
+<h3>Fact history <small>({{ history|length }})</small></h3>
+{% if history %}
+<table>
+  <thead><tr><th scope="col">Captured</th><th scope="col">Playbook</th></tr></thead>
+  <tbody>
+  {% for h in history %}
+    <tr>
+      <td><small title="{{ h.captured_at }}">{{ h.captured_at | naturaltime }}</small></td>
+      <td><a href="{{ url_for('playbook_detail', playbook_id=h.playbook_id) }}"><code>{{ h.playbook_id }}</code></a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No fact snapshots recorded.</em></p>
+{% endif %}
+
+<h3>Raw facts</h3>
+<pre><code>{{ host.last_facts | tojson(indent=2) }}</code></pre>
+{% endblock %}

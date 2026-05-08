@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="generator" content="johnny">
+  <title>{% block title %}johnny{% endblock %}</title>
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.amber.min.css">
+  <style>
+    /* Play / event status colors. Pico amber doesn't expose semantic
+       state colors as CSS variables; using CSS named colors keeps
+       things light + dark friendly via `light-dark()`. */
+    .play-status-finished { color: light-dark(seagreen, lightgreen); }
+    .play-status-failed   { color: light-dark(crimson,  lightcoral); }
+    .play-status-running  { color: light-dark(darkorange, gold); }
+    /* Tighten table density a touch — johnny's tables are wide. */
+    table { font-size: 0.95rem; }
+    pre   { font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <nav>
+      <ul>
+        <li><a href="{{ url_for('index') }}"><strong>johnny</strong></a></li>
+      </ul>
+      <ul>
+        <li><a href="{{ url_for('index') }}">hosts</a></li>
+        <li><a href="{{ url_for('playbooks_list') }}">playbooks</a></li>
+      </ul>
+    </nav>
+    {% block content %}{% endblock %}
+    <footer>
+      <hr>
+      <small><em>johnny — Ansible callback receiver and fleet-state browser.</em></small>
+    </footer>
+  </main>
+</body>
+</html>

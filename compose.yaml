@@ -1,0 +1,58 @@
+# Three containers, one image, three commands. Same operational shape
+# as mimir's web/scheduler split, with an extra split between read (web)
+# and write (api) tiers — see CONTEXT.md "Container split".
+#
+# johnny-tasks owns alembic + retention pruning. johnny-web and
+# johnny-api both depend on its healthcheck (the migration sentinel
+# file), so they only start once the schema is current.
+
+services:
+  johnny-tasks:
+    build: .
+    image: johnny:dev
+    command: tasks
+    restart: unless-stopped
+    volumes:
+      - johnny-data:/data
+    environment:
+      DATABASE_URL: sqlite:////data/johnny.db
+      RETENTION_DAYS: ${RETENTION_DAYS:-30}
+      PRUNE_INTERVAL_SECONDS: ${PRUNE_INTERVAL_SECONDS:-86400}
+    healthcheck:
+      test: ["CMD", "test", "-f", "/data/.migrated"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  johnny-api:
+    image: johnny:dev
+    command: api
+    restart: unless-stopped
+    volumes:
+      - johnny-data:/data
+    environment:
+      DATABASE_URL: sqlite:////data/johnny.db
+      JOHNNY_API_TOKEN: ${JOHNNY_API_TOKEN:?JOHNNY_API_TOKEN must be set}
+    ports:
+      - "${API_PORT:-8001}:8001"
+    depends_on:
+      johnny-tasks:
+        condition: service_healthy
+
+  johnny-web:
+    image: johnny:dev
+    command: web
+    restart: unless-stopped
+    volumes:
+      - johnny-data:/data
+    environment:
+      DATABASE_URL: sqlite:////data/johnny.db
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+    depends_on:
+      johnny-tasks:
+        condition: service_healthy
+
+volumes:
+  johnny-data:

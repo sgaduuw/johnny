@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}hosts | johnny{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Hosts</h2>
+  <p>{{ hosts|length }} known.</p>
+</hgroup>
+{% if hosts %}
+<figure>
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">FQDN</th>
+        <th scope="col">IPv4</th>
+        <th scope="col">Virt</th>
+        <th scope="col">Memory</th>
+        <th scope="col">vCPUs</th>
+        <th scope="col">Uptime</th>
+        <th scope="col">Last seen</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for h in hosts %}
+      <tr>
+        <td><a href="{{ url_for('host_detail', fqdn=h.fqdn) }}">{{ h.fqdn }}</a></td>
+        <td><code>{{ h.default_ipv4 or '—' }}</code></td>
+        <td>
+          {%- if h.virt_role -%}
+            {{ h.virt_role }}{% if h.virt_type and h.virt_type != 'NA' %} / {{ h.virt_type }}{% endif %}
+          {%- else -%}—{%- endif -%}
+        </td>
+        <td>{{ h.memtotal_mb | mem_gb }}</td>
+        <td>{{ h.vcpus or '—' }}</td>
+        <td>{{ h.uptime_seconds | uptime }}</td>
+        <td><small title="{{ h.last_seen_at }}">{{ h.last_seen_at | naturaltime }}</small></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</figure>
+{% else %}
+<p><em>No hosts seen yet. Run a playbook with the johnny callback plugin enabled.</em></p>
+{% endif %}
+{% endblock %}

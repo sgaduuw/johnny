@@ -160,3 +160,13 @@ cython_debug/
 .idea/
 
 **/.DS_Store
+
+# SQLite dev databases
+*.db
+*.db-wal
+*.db-shm
+
+# Per-project Claude docs (rsync'd between workspaces, not committed)
+CLAUDE.md
+CONTEXT.md
+MEMORY.md

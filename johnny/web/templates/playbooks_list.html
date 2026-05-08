@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}playbooks | johnny{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Recent playbooks</h2>
+  <p>{{ plays|length }} shown.</p>
+</hgroup>
+{% if plays %}
+<figure>
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Started</th>
+        <th scope="col">Name</th>
+        <th scope="col">User</th>
+        <th scope="col">Status</th>
+        <th scope="col">Duration</th>
+        <th scope="col">Inventory</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for p in plays %}
+      <tr>
+        <td><small title="{{ p.started_at }}">{{ p.started_at | naturaltime }}</small></td>
+        <td><a href="{{ url_for('playbook_detail', playbook_id=p.id) }}">{{ p.name }}</a></td>
+        <td><code>{{ p.user }}</code></td>
+        <td><span class="play-status-{{ p.status.value }}">{{ p.status.value }}</span></td>
+        <td>
+          {%- if p.finished_at -%}
+            {{ ((p.finished_at - p.started_at).total_seconds() | int) }}s
+          {%- else -%}—{%- endif -%}
+        </td>
+        <td><small>{{ p.inventory_sources | join(', ') }}</small></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</figure>
+{% else %}
+<p><em>No playbooks recorded yet.</em></p>
+{% endif %}
+{% endblock %}
