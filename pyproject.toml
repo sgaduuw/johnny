@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = "^3.14"
 Flask = "^3.0.0"
 gunicorn = "^21.2.0"
 pydantic = {extras = ["email"], version = "^2.6.4"}

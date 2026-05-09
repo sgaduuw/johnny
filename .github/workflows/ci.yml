@@ -16,7 +16,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install poetry
         run: pip install "poetry==1.8.5"
@@ -25,9 +25,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/pypoetry/virtualenvs
-          key: poetry-${{ runner.os }}-py3.12-${{ hashFiles('poetry.lock') }}
+          key: poetry-${{ runner.os }}-py3.14-${{ hashFiles('poetry.lock') }}
           restore-keys: |
-            poetry-${{ runner.os }}-py3.12-
+            poetry-${{ runner.os }}-py3.14-
 
       - name: Install dependencies
         run: poetry install --no-interaction

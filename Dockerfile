@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.14
 
 # ---------------------------------------------------------- base
 # Python + poetry + main runtime deps only. Shared by test and prod
