@@ -44,6 +44,7 @@ def create_app(engine_factory: EngineFactory | None = None) -> Flask:
     app.add_template_filter(_naturaltime, "naturaltime")
     app.add_template_filter(_uptime, "uptime")
     app.add_template_filter(_mem_gb, "mem_gb")
+    app.add_template_filter(_play_stats, "play_stats")
 
     from johnny.web.routes import register_routes
 
@@ -85,3 +86,25 @@ def _mem_gb(mb: int | None) -> str:
     if mb < 1024:
         return f"{mb} MB"
     return f"{mb // 1024} GB"
+
+
+def _play_stats(stats: dict[str, dict[str, int]] | None) -> dict[str, int] | None:
+    """Aggregate per-host task counts in a playbook's stats dict.
+
+    `Playbook.stats` is keyed by host fqdn; each value is the task
+    outcome counts for that host (ok/changed/failed/unreachable/etc.)
+    over the play. Sum across hosts so the list view can show a
+    one-line summary; expose `hosts` separately so the template can
+    render run size up front.
+
+    Returns None when stats is None (the play hasn't reported finish).
+    """
+    if not stats:
+        return None
+    keys = ("ok", "changed", "failed", "unreachable", "skipped", "rescued", "ignored")
+    totals: dict[str, int] = {k: 0 for k in keys}
+    for host_counts in stats.values():
+        for k in keys:
+            totals[k] += host_counts.get(k, 0) or 0
+    totals["hosts"] = len(stats)
+    return totals

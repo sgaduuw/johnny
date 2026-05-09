@@ -15,6 +15,7 @@
         <th scope="col">User</th>
         <th scope="col">Status</th>
         <th scope="col">Duration</th>
+        <th scope="col">Outcome</th>
         <th scope="col">Inventory</th>
       </tr>
     </thead>
@@ -28,6 +29,18 @@
         <td>
           {%- if p.finished_at -%}
             {{ ((p.finished_at - p.started_at).total_seconds() | int) }}s
+          {%- else -%}—{%- endif -%}
+        </td>
+        <td>
+          {%- set t = p.stats | play_stats -%}
+          {%- if t -%}
+            <small>
+              {{ t.hosts }} host{% if t.hosts != 1 %}s{% endif %} ·
+              {{ t.ok }} ok
+              {%- if t.changed %}, {{ t.changed }} changed{% endif -%}
+              {%- if t.failed %}, <span class="play-status-failed">{{ t.failed }} failed</span>{% endif -%}
+              {%- if t.unreachable %}, <span class="play-status-failed">{{ t.unreachable }} unreachable</span>{% endif -%}
+            </small>
           {%- else -%}—{%- endif -%}
         </td>
         <td><small>{{ p.inventory_sources | join(', ') }}</small></td>
