@@ -65,6 +65,9 @@ def _seed_full_play(session: Session) -> str:
                         "ansible_virtualization_type": "kvm",
                         "ansible_memtotal_mb": 4096,
                         "ansible_processor_vcpus": 2,
+                        "ansible_distribution": "Debian",
+                        "ansible_distribution_version": "12.5",
+                        "ansible_kernel": "6.1.0-26-amd64",
                     },
                 )
             ],
@@ -118,6 +121,9 @@ class TestHostsList:
         assert "web1.example.com" in body
         assert "10.0.0.1" in body
         assert "4 GB" in body  # memtotal_mb=4096 -> 4 GB via mem_gb filter
+        # OS / Kernel column: distribution + version + kernel.
+        assert "Debian 12.5" in body
+        assert "6.1.0-26-amd64" in body
 
 
 class TestHostDetail:

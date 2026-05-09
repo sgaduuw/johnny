@@ -23,6 +23,9 @@ def _facts(ip: str = "10.0.0.5", uptime: int = 86400) -> dict[str, Any]:
         "ansible_virtualization_type": "kvm",
         "ansible_memtotal_mb": 65536,
         "ansible_processor_vcpus": 16,
+        "ansible_distribution": "Debian",
+        "ansible_distribution_version": "12.5",
+        "ansible_kernel": "6.1.0-26-amd64",
     }
 
 
@@ -63,6 +66,9 @@ class TestUpsertFromRecord:
         assert h.virt_type == "kvm"
         assert h.memtotal_mb == 65536
         assert h.vcpus == 16
+        assert h.distribution == "Debian"
+        assert h.distribution_version == "12.5"
+        assert h.kernel == "6.1.0-26-amd64"
 
     def test_updates_existing_host_in_place(
         self, session: Session, playbook: Playbook

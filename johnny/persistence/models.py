@@ -130,6 +130,27 @@ class Host(Base):
             persisted=True,
         ),
     )
+    distribution: Mapped[str | None] = mapped_column(
+        String(64),
+        Computed(
+            json_path("last_facts", "ansible_distribution"),
+            persisted=True,
+        ),
+    )
+    distribution_version: Mapped[str | None] = mapped_column(
+        String(64),
+        Computed(
+            json_path("last_facts", "ansible_distribution_version"),
+            persisted=True,
+        ),
+    )
+    kernel: Mapped[str | None] = mapped_column(
+        String(128),
+        Computed(
+            json_path("last_facts", "ansible_kernel"),
+            persisted=True,
+        ),
+    )
 
     history: Mapped[list[HostFactsHistory]] = relationship(
         back_populates="host",

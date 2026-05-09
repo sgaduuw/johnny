@@ -25,6 +25,18 @@
     <h4><code>{{ host.default_ipv4 or '—' }}</code></h4>
   </article>
   <article>
+    <small>OS</small>
+    <h4>
+      {%- if host.distribution -%}
+        {{ host.distribution }}{% if host.distribution_version %} {{ host.distribution_version }}{% endif %}
+      {%- else -%}—{%- endif -%}
+    </h4>
+  </article>
+  <article>
+    <small>Kernel</small>
+    <h4><code>{{ host.kernel or '—' }}</code></h4>
+  </article>
+  <article>
     <small>Virt</small>
     <h4>{{ host.virt_role or '—' }}{% if host.virt_type and host.virt_type != 'NA' %} / {{ host.virt_type }}{% endif %}</h4>
   </article>

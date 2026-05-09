@@ -12,6 +12,7 @@
       <tr>
         <th scope="col">FQDN</th>
         <th scope="col">IPv4</th>
+        <th scope="col">OS / Kernel</th>
         <th scope="col">Virt</th>
         <th scope="col">Memory</th>
         <th scope="col">vCPUs</th>
@@ -24,6 +25,14 @@
       <tr>
         <td><a href="{{ url_for('host_detail', fqdn=h.fqdn) }}">{{ h.fqdn }}</a></td>
         <td><code>{{ h.default_ipv4 or '—' }}</code></td>
+        <td>
+          {%- if h.distribution -%}
+            {{ h.distribution }}{% if h.distribution_version %} {{ h.distribution_version }}{% endif %}
+            {%- if h.kernel %}<br><small><code>{{ h.kernel }}</code></small>{%- endif -%}
+          {%- elif h.kernel -%}
+            <small><code>{{ h.kernel }}</code></small>
+          {%- else -%}—{%- endif -%}
+        </td>
         <td>
           {%- if h.virt_role -%}
             {{ h.virt_role }}{% if h.virt_type and h.virt_type != 'NA' %} / {{ h.virt_type }}{% endif %}
