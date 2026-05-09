@@ -28,7 +28,7 @@
     <small>OS</small>
     <h4>
       {%- if host.distribution -%}
-        {{ host.distribution }}{% if host.distribution_version %} {{ host.distribution_version }}{% endif %}
+        {{ host.distribution }}{% if host.distribution_version and host.distribution_version != 'NA' %} {{ host.distribution_version }}{% endif %}
       {%- else -%}—{%- endif -%}
     </h4>
   </article>

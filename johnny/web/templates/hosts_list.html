@@ -12,7 +12,8 @@
       <tr>
         <th scope="col">FQDN</th>
         <th scope="col">IPv4</th>
-        <th scope="col">OS / Kernel</th>
+        <th scope="col">OS</th>
+        <th scope="col">Kernel</th>
         <th scope="col">Virt</th>
         <th scope="col">Memory</th>
         <th scope="col">vCPUs</th>
@@ -27,11 +28,11 @@
         <td><code>{{ h.default_ipv4 or '—' }}</code></td>
         <td>
           {%- if h.distribution -%}
-            {{ h.distribution }}{% if h.distribution_version %} {{ h.distribution_version }}{% endif %}
-            {%- if h.kernel %}<br><small><code>{{ h.kernel }}</code></small>{%- endif -%}
-          {%- elif h.kernel -%}
-            <small><code>{{ h.kernel }}</code></small>
+            {{ h.distribution }}{% if h.distribution_version and h.distribution_version != 'NA' %} {{ h.distribution_version }}{% endif %}
           {%- else -%}—{%- endif -%}
+        </td>
+        <td>
+          {%- if h.kernel -%}<code>{{ h.kernel }}</code>{%- else -%}—{%- endif -%}
         </td>
         <td>
           {%- if h.virt_role -%}

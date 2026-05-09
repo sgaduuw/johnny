@@ -121,7 +121,7 @@ class TestHostsList:
         assert "web1.example.com" in body
         assert "10.0.0.1" in body
         assert "4 GB" in body  # memtotal_mb=4096 -> 4 GB via mem_gb filter
-        # OS / Kernel column: distribution + version + kernel.
+        # OS column: distribution + version. Kernel column: kernel.
         assert "Debian 12.5" in body
         assert "6.1.0-26-amd64" in body
 
