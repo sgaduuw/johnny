@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from johnny.contracts.v1 import FactRecord
-from johnny.persistence import Host, HostFactsHistory, Playbook
+from johnny.persistence import Event, Host, HostFactsHistory, Playbook, PlaybookHost
+from johnny.persistence.models import TaskStatus
 from johnny.services.hosts import HostService
 
 
@@ -189,3 +191,253 @@ class TestPruneHistory:
             older_than=datetime.now(timezone.utc)
         )
         assert deleted == 0
+
+
+def _seed_split_pair(
+    session: Session,
+    playbook: Playbook,
+    *,
+    short_fqdn: str = "web1",
+    canonical_fqdn: str = "web1.example.com",
+    facts: dict[str, Any] | None = None,
+) -> tuple[Host, Host]:
+    """Build two Host rows that resolve to the same canonical FQDN.
+
+    Returns (short_form, fqdn_form). Both have history rows; their
+    latest snapshot has identical fact content, mirroring what would
+    happen if the same physical host posted under two names from
+    different fact-arrival paths.
+    """
+    svc = HostService(session)
+    captured = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    f = facts or {
+        "ansible_fqdn": canonical_fqdn,
+        "ansible_hostname": short_fqdn,
+        "ansible_domain": "example.com",
+    }
+    short = svc.upsert_from_record(
+        playbook.id,
+        captured,
+        FactRecord(
+            fqdn=short_fqdn,
+            inventory_hostname=short_fqdn,
+            groups=[],
+            ansible_facts=f,
+        ),
+    )
+    fqdn_form = svc.upsert_from_record(
+        playbook.id,
+        captured,
+        FactRecord(
+            fqdn=canonical_fqdn,
+            inventory_hostname=canonical_fqdn,
+            groups=[],
+            ansible_facts=f,
+        ),
+    )
+    session.flush()
+    return short, fqdn_form
+
+
+def _add_event(
+    session: Session, playbook_id: UUID, host_id: int
+) -> Event:
+    e = Event(
+        event_uuid=uuid4(),
+        playbook_id=playbook_id,
+        host_id=host_id,
+        task_name="probe",
+        task_action="command",
+        status=TaskStatus.OK,
+        started_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        duration_ms=10,
+    )
+    session.add(e)
+    session.flush()
+    return e
+
+
+def _add_playbook_host(
+    session: Session, playbook_id: UUID, host_id: int
+) -> PlaybookHost:
+    ph = PlaybookHost(
+        playbook_id=playbook_id,
+        host_id=host_id,
+        inventory_hostname=f"host-{host_id}",
+        groups=[],
+    )
+    session.add(ph)
+    session.flush()
+    return ph
+
+
+class TestFindMergeCandidates:
+    def test_no_candidates_when_all_unique(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        svc = HostService(session)
+        svc.upsert_from_record(
+            playbook.id,
+            datetime.now(timezone.utc),
+            FactRecord(
+                fqdn="lonely.example.com",
+                inventory_hostname="lonely",
+                groups=[],
+                ansible_facts={"ansible_fqdn": "lonely.example.com"},
+            ),
+        )
+        assert svc.find_merge_candidates() == []
+
+    def test_groups_split_pair_with_canonical_survivor(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        short, fqdn_form = _seed_split_pair(session, playbook)
+        groups = HostService(session).find_merge_candidates()
+        assert len(groups) == 1
+        g = groups[0]
+        assert g.canonical_fqdn == "web1.example.com"
+        assert g.survivor.id == fqdn_form.id
+        assert [o.id for o in g.orphans] == [short.id]
+
+    def test_skips_hosts_with_no_history(
+        self, session: Session
+    ) -> None:
+        # Two empty-history hosts share a name pattern but can't be
+        # canonicalised without facts; they're left alone.
+        HostService(session).get_or_create_by_fqdn("ghost1")
+        HostService(session).get_or_create_by_fqdn("ghost2")
+        assert HostService(session).find_merge_candidates() == []
+
+    def test_fk_counts_reflect_actual_orphan_rows(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        short, _ = _seed_split_pair(session, playbook)
+        # Add some events and a playbook_hosts row pointing at short.
+        _add_event(session, playbook.id, short.id)
+        _add_event(session, playbook.id, short.id)
+        _add_playbook_host(session, playbook.id, short.id)
+        groups = HostService(session).find_merge_candidates()
+        assert groups[0].fk_counts == {
+            "host_facts_history": 1,  # one snapshot per upsert
+            "events": 2,
+            "playbook_hosts": 1,
+        }
+
+
+class TestMergeInto:
+    def test_re_points_history_events_and_playbook_hosts(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        short, fqdn_form = _seed_split_pair(session, playbook)
+        _add_event(session, playbook.id, short.id)
+        _add_event(session, playbook.id, short.id)
+        _add_playbook_host(session, playbook.id, short.id)
+
+        counts = HostService(session).merge_into(
+            survivor_id=fqdn_form.id,
+            orphan_ids=[short.id],
+            canonical_fqdn="web1.example.com",
+        )
+        session.flush()
+
+        assert counts["events"] == 2
+        assert counts["host_facts_history"] == 1
+        assert counts["playbook_hosts"] == 1
+        assert counts["hosts_deleted"] == 1
+
+        assert session.query(Event).filter_by(host_id=short.id).count() == 0
+        assert session.query(Event).filter_by(host_id=fqdn_form.id).count() == 2
+        assert session.get(Host, short.id) is None
+        assert session.get(Host, fqdn_form.id) is not None
+
+    def test_handles_playbook_hosts_pk_collision(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        # Both survivor and orphan have a playbook_hosts row for the
+        # same playbook. The merge must drop the orphan's row, not
+        # IntegrityError trying to UPDATE into the existing PK.
+        short, fqdn_form = _seed_split_pair(session, playbook)
+        _add_playbook_host(session, playbook.id, short.id)
+        _add_playbook_host(session, playbook.id, fqdn_form.id)
+        assert session.query(PlaybookHost).count() == 2
+
+        HostService(session).merge_into(
+            survivor_id=fqdn_form.id,
+            orphan_ids=[short.id],
+            canonical_fqdn="web1.example.com",
+        )
+        session.flush()
+
+        rows = session.query(PlaybookHost).all()
+        assert len(rows) == 1
+        assert rows[0].host_id == fqdn_form.id
+
+    def test_updates_survivor_fqdn_when_differs(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        # Both rows are off-canonical; merge promotes the survivor
+        # to the canonical form once the orphan is gone.
+        svc = HostService(session)
+        captured = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        facts = {
+            "ansible_hostname": "web1",
+            "ansible_domain": "example.com",
+        }
+        a = svc.upsert_from_record(
+            playbook.id,
+            captured,
+            FactRecord(
+                fqdn="web1-a",
+                inventory_hostname="web1-a",
+                groups=[],
+                ansible_facts=facts,
+            ),
+        )
+        b = svc.upsert_from_record(
+            playbook.id,
+            captured,
+            FactRecord(
+                fqdn="web1-bbb",
+                inventory_hostname="web1-bbb",
+                groups=[],
+                ansible_facts=facts,
+            ),
+        )
+        # Neither row is at canonical; pick_survivor takes longest
+        # fqdn (b), then promotes it.
+        groups = svc.find_merge_candidates()
+        assert len(groups) == 1
+        assert groups[0].canonical_fqdn == "web1.example.com"
+        assert groups[0].survivor.id == b.id
+
+        svc.merge_into(b.id, [a.id], "web1.example.com")
+        session.flush()
+        session.refresh(b)
+        assert b.fqdn == "web1.example.com"
+
+    def test_idempotent_no_op_after_merge(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        short, fqdn_form = _seed_split_pair(session, playbook)
+        svc = HostService(session)
+        groups = svc.find_merge_candidates()
+        assert len(groups) == 1
+        svc.merge_into(
+            groups[0].survivor.id,
+            [o.id for o in groups[0].orphans],
+            groups[0].canonical_fqdn,
+        )
+        session.flush()
+        # Subsequent run sees a single canonical host; no candidates.
+        assert svc.find_merge_candidates() == []
+
+    def test_empty_orphan_list_is_noop(
+        self, session: Session
+    ) -> None:
+        # Defensive: callers should never pass empty, but if they do
+        # the method returns zero counts and writes nothing.
+        counts = HostService(session).merge_into(
+            survivor_id=42, orphan_ids=[], canonical_fqdn="x"
+        )
+        assert counts["hosts_deleted"] == 0
+        assert counts["events"] == 0

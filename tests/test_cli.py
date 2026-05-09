@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 from click.testing import CliRunner
+from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -19,7 +20,8 @@ from johnny.contracts.v1 import (
     TaskEvent,
     TaskStatus,
 )
-from johnny.persistence import Event, HostFactsHistory
+from johnny.persistence import Event, Host, HostFactsHistory, Playbook
+from johnny.services.hosts import HostService
 from johnny.services.ingest import CallbackIngest
 
 
@@ -118,3 +120,101 @@ class TestPrune:
         session.expire_all()
         assert session.query(HostFactsHistory).count() == 1
         assert session.query(Event).count() == 1
+
+
+def _seed_split_pair_for_cli(session: Session, playbook: Playbook) -> None:
+    """Inline copy of test_hosts._seed_split_pair, kept here so the
+    two test files don't import from each other."""
+    svc = HostService(session)
+    captured = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    facts = {
+        "ansible_fqdn": "web1.example.com",
+        "ansible_hostname": "web1",
+        "ansible_domain": "example.com",
+    }
+    svc.upsert_from_record(
+        playbook.id,
+        captured,
+        FactRecord(
+            fqdn="web1",
+            inventory_hostname="web1",
+            groups=[],
+            ansible_facts=facts,
+        ),
+    )
+    svc.upsert_from_record(
+        playbook.id,
+        captured,
+        FactRecord(
+            fqdn="web1.example.com",
+            inventory_hostname="web1.example.com",
+            groups=[],
+            ansible_facts=facts,
+        ),
+    )
+    session.commit()
+
+
+class TestDedupeHosts:
+    def test_dry_run_prints_plan_without_writing(
+        self,
+        engine: Engine,
+        session: Session,
+        playbook: Playbook,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _seed_split_pair_for_cli(session, playbook)
+        assert session.query(Host).count() == 2
+
+        from johnny.config import get_settings
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+
+        result = CliRunner().invoke(cli, ["dedupe-hosts", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "canonical: web1.example.com" in result.output
+        assert "dry run" in result.output
+
+        session.expire_all()
+        assert session.query(Host).count() == 2  # untouched
+
+    def test_live_merges_and_is_idempotent(
+        self,
+        engine: Engine,
+        session: Session,
+        playbook: Playbook,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _seed_split_pair_for_cli(session, playbook)
+        assert session.query(Host).count() == 2
+
+        from johnny.config import get_settings
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+
+        result = CliRunner().invoke(cli, ["dedupe-hosts"])
+        assert result.exit_code == 0, result.output
+        assert "merged: 1 groups" in result.output
+
+        session.expire_all()
+        assert session.query(Host).count() == 1
+        survivor = session.scalars(select(Host)).one()
+        assert survivor.fqdn == "web1.example.com"
+
+        # Rerun: nothing left to merge.
+        result2 = CliRunner().invoke(cli, ["dedupe-hosts"])
+        assert result2.exit_code == 0
+        assert "nothing to merge" in result2.output
+
+    def test_no_op_when_no_candidates(
+        self,
+        engine: Engine,
+        session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from johnny.config import get_settings
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+        result = CliRunner().invoke(cli, ["dedupe-hosts"])
+        assert result.exit_code == 0
+        assert "nothing to merge" in result.output
