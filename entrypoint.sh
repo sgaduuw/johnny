@@ -34,16 +34,21 @@ case "${1:-}" in
     ;;
 
   tasks)
-    # Migration sentinel: alembic upgrade head once per data volume.
-    # johnny-web and johnny-api depend_on this container's healthcheck
-    # (test -f $SENTINEL) so they only start after the schema is current.
+    # Always run alembic upgrade head: it's a no-op when the schema
+    # is already at head, and it's the only way new migrations get
+    # applied across a container restart on an existing data volume.
+    # The earlier sentinel-gates-the-upgrade design left every
+    # migration after the first one un-applied (johnny issue with
+    # v0.2.2's projection-column migration sitting unapplied was the
+    # surfacing case).
+    echo "tasks: running alembic upgrade head"
+    alembic upgrade head
+    # Sentinel still serves the web/api startup gate (their
+    # depend_on healthcheck waits for `test -f $SENTINEL`). Touch
+    # it on first start; subsequent starts leave it in place.
     if [ ! -f "${SENTINEL}" ]; then
-      echo "tasks: applying alembic migrations"
-      alembic upgrade head
       touch "${SENTINEL}"
-      echo "tasks: migrations applied, sentinel written to ${SENTINEL}"
-    else
-      echo "tasks: sentinel ${SENTINEL} present, skipping alembic"
+      echo "tasks: first-start sentinel written to ${SENTINEL}"
     fi
 
     # Periodic retention sweep. Plain loop is intentional — we explicitly
