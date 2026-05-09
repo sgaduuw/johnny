@@ -205,22 +205,21 @@ def _seed_split_pair(
     *,
     short_fqdn: str = "web1",
     canonical_fqdn: str = "web1.example.com",
-    facts: dict[str, Any] | None = None,
 ) -> tuple[Host, Host]:
     """Build two Host rows that resolve to the same canonical FQDN.
 
-    Returns (short_form, fqdn_form). Both have history rows; their
-    latest snapshot has identical fact content, mirroring what would
-    happen if the same physical host posted under two names from
-    different fact-arrival paths.
+    Mirrors the actual production incident from the johnny-callback
+    v0.1.4 prefix bug: the short-form row carries facts with the
+    ansible_ prefix STRIPPED (the buggy plugin's snapshot output),
+    while the FQDN-form row carries facts WITH the prefix (from the
+    plugin's _record_facts path which always returned the right
+    shape). The dedup logic must run both shapes through
+    ensure_ansible_prefix before resolve_fqdn for the two rows to
+    canonicalise to the same FQDN — that's the regression branch
+    every test in this module ought to exercise by default.
     """
     svc = HostService(session)
     captured = datetime(2026, 5, 1, tzinfo=timezone.utc)
-    f = facts or {
-        "ansible_fqdn": canonical_fqdn,
-        "ansible_hostname": short_fqdn,
-        "ansible_domain": "example.com",
-    }
     short = svc.upsert_from_record(
         playbook.id,
         captured,
@@ -228,7 +227,12 @@ def _seed_split_pair(
             fqdn=short_fqdn,
             inventory_hostname=short_fqdn,
             groups=[],
-            ansible_facts=f,
+            # Unprefixed: the v0.1.4 bug shape.
+            ansible_facts={
+                "fqdn": canonical_fqdn,
+                "hostname": short_fqdn,
+                "domain": "example.com",
+            },
         ),
     )
     fqdn_form = svc.upsert_from_record(
@@ -238,7 +242,12 @@ def _seed_split_pair(
             fqdn=canonical_fqdn,
             inventory_hostname=canonical_fqdn,
             groups=[],
-            ansible_facts=f,
+            # Prefixed: the post-fix shape.
+            ansible_facts={
+                "ansible_fqdn": canonical_fqdn,
+                "ansible_hostname": short_fqdn,
+                "ansible_domain": "example.com",
+            },
         ),
     )
     session.flush()
@@ -489,12 +498,40 @@ class TestMergeInto:
         assert svc.find_merge_candidates() == []
 
     def test_empty_orphan_list_is_noop(
-        self, session: Session
+        self, session: Session, playbook: Playbook
     ) -> None:
         # Defensive: callers should never pass empty, but if they do
-        # the method returns zero counts and writes nothing.
-        counts = HostService(session).merge_into(
-            survivor_id=42, orphan_ids=[], canonical_fqdn="x"
+        # the method returns zero counts and writes nothing. Seed a
+        # real Host + dependent Event/PlaybookHost so the assertions
+        # can verify the no-op leaves persisted state untouched —
+        # a missing-survivor edge case alone would pass even if the
+        # early-return guard were removed (the survivor lookup would
+        # silently return None).
+        svc = HostService(session)
+        captured = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        h = svc.upsert_from_record(playbook.id, captured, _record())
+        _add_event(session, playbook.id, h.id)
+        _add_playbook_host(session, playbook.id, h.id)
+        session.flush()
+        host_count_before = session.query(Host).count()
+        event_count_before = session.query(Event).count()
+        ph_count_before = session.query(PlaybookHost).count()
+
+        counts = svc.merge_into(
+            survivor_id=h.id, orphan_ids=[], canonical_fqdn="x"
         )
-        assert counts["hosts_deleted"] == 0
-        assert counts["events"] == 0
+
+        assert counts == {
+            "host_facts_history": 0,
+            "events": 0,
+            "playbook_hosts": 0,
+            "fqdn_updated": 0,
+            "hosts_deleted": 0,
+        }
+        # Nothing on disk changed.
+        assert session.query(Host).count() == host_count_before
+        assert session.query(Event).count() == event_count_before
+        assert session.query(PlaybookHost).count() == ph_count_before
+        # Survivor's fqdn is intact (no rename to "x").
+        session.refresh(h)
+        assert h.fqdn == "nas.example.com"
