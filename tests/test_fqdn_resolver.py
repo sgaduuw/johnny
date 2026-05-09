@@ -9,7 +9,46 @@ the convergence guarantee breaks.
 
 from __future__ import annotations
 
-from johnny.persistence._fqdn import resolve_fqdn
+from johnny.persistence._fqdn import ensure_ansible_prefix, resolve_fqdn
+
+
+class TestEnsureAnsiblePrefix:
+    """Mirror of johnny-callback's TestEnsureAnsiblePrefix class."""
+
+    def test_re_adds_prefix_to_unprefixed_keys(self) -> None:
+        out = ensure_ansible_prefix({
+            "fqdn": "web1.example.com",
+            "default_ipv4": {"address": "10.0.0.1"},
+            "memtotal_mb": 4096,
+        })
+        assert out == {
+            "ansible_fqdn": "web1.example.com",
+            "ansible_default_ipv4": {"address": "10.0.0.1"},
+            "ansible_memtotal_mb": 4096,
+        }
+
+    def test_keeps_already_prefixed_keys(self) -> None:
+        out = ensure_ansible_prefix({
+            "ansible_fqdn": "web1.example.com",
+            "ansible_uptime_seconds": 3600,
+        })
+        assert out == {
+            "ansible_fqdn": "web1.example.com",
+            "ansible_uptime_seconds": 3600,
+        }
+
+    def test_handles_mixed_keys(self) -> None:
+        out = ensure_ansible_prefix({
+            "fqdn": "x",
+            "ansible_distribution": "Debian",
+        })
+        assert out == {
+            "ansible_fqdn": "x",
+            "ansible_distribution": "Debian",
+        }
+
+    def test_empty_input(self) -> None:
+        assert ensure_ansible_prefix({}) == {}
 
 
 class TestResolveFqdnLadder:
@@ -58,13 +97,14 @@ class TestResolveFqdnLadder:
 class TestResolveFqdnMatchesCallbackPlugin:
     """Drift catcher.
 
-    The callback plugin owns the canonical _resolve_fqdn. This johnny
-    copy must agree on every input the plugin tests. If a row here
-    fails, the two implementations have drifted; one of them is
-    behind. Update the lagging side, do not relax the assertion.
+    The callback plugin owns the canonical _resolve_fqdn /
+    _ensure_ansible_prefix. This johnny copy must agree on every
+    input the plugin tests. If a row here fails, the two
+    implementations have drifted; one of them is behind. Update the
+    lagging side, do not relax the assertion.
 
     Plugin source pinned at:
-      sgaduuw/johnny-callback @ 4d46bee :: plugins/callback/callback.py:99
+      sgaduuw/johnny-callback @ 812ed8a :: plugins/callback/callback.py
     """
 
     CASES = [
@@ -116,4 +156,28 @@ class TestResolveFqdnMatchesCallbackPlugin:
             assert resolve_fqdn(facts, inv) == expected, (
                 f"drift on input ({facts}, {inv}): "
                 f"got {resolve_fqdn(facts, inv)!r}, expected {expected!r}"
+            )
+
+    PREFIX_CASES = [
+        # (input, expected_output)
+        (
+            {"fqdn": "x", "default_ipv4": {"address": "10.0.0.1"}},
+            {"ansible_fqdn": "x", "ansible_default_ipv4": {"address": "10.0.0.1"}},
+        ),
+        (
+            {"ansible_fqdn": "x"},
+            {"ansible_fqdn": "x"},
+        ),
+        (
+            {"fqdn": "x", "ansible_distribution": "Debian"},
+            {"ansible_fqdn": "x", "ansible_distribution": "Debian"},
+        ),
+        ({}, {}),
+    ]
+
+    def test_ensure_prefix_cases_agree(self) -> None:
+        for raw, expected in self.PREFIX_CASES:
+            assert ensure_ansible_prefix(raw) == expected, (
+                f"drift on input {raw}: "
+                f"got {ensure_ansible_prefix(raw)!r}, expected {expected!r}"
             )

@@ -308,6 +308,57 @@ class TestFindMergeCandidates:
         HostService(session).get_or_create_by_fqdn("ghost2")
         assert HostService(session).find_merge_candidates() == []
 
+    def test_groups_split_pair_when_short_row_has_unprefixed_facts(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        # Regression: johnny-callback v0.1.2..v0.1.4 stored facts from
+        # the variable_manager with the ansible_ prefix stripped.
+        # Before the fix, find_merge_candidates ran resolve_fqdn over
+        # the raw shape and the short row canonicalised to its own
+        # short fqdn (no ansible_fqdn key found), never grouping with
+        # the FQDN-form duplicate.
+        svc = HostService(session)
+        captured = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        # Short row: unprefixed (the buggy plugin's output shape).
+        short = svc.upsert_from_record(
+            playbook.id,
+            captured,
+            FactRecord(
+                fqdn="bespin",
+                inventory_hostname="bespin",
+                groups=[],
+                ansible_facts={
+                    "fqdn": "bespin.ntv.ts18.eu",
+                    "hostname": "bespin",
+                    "domain": "ntv.ts18.eu",
+                    "default_ipv4": {"address": "192.168.1.6"},
+                },
+            ),
+        )
+        # FQDN row: prefixed (from _record_facts, which always
+        # returned the right shape).
+        fqdn_form = svc.upsert_from_record(
+            playbook.id,
+            captured,
+            FactRecord(
+                fqdn="bespin.ntv.ts18.eu",
+                inventory_hostname="bespin",
+                groups=[],
+                ansible_facts={
+                    "ansible_fqdn": "bespin.ntv.ts18.eu",
+                    "ansible_hostname": "bespin",
+                    "ansible_domain": "ntv.ts18.eu",
+                    "ansible_default_ipv4": {"address": "192.168.1.6"},
+                },
+            ),
+        )
+        groups = HostService(session).find_merge_candidates()
+        assert len(groups) == 1
+        g = groups[0]
+        assert g.canonical_fqdn == "bespin.ntv.ts18.eu"
+        assert g.survivor.id == fqdn_form.id
+        assert [o.id for o in g.orphans] == [short.id]
+
     def test_fk_counts_reflect_actual_orphan_rows(
         self, session: Session, playbook: Playbook
     ) -> None:

@@ -16,7 +16,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from johnny.contracts.v1 import FactRecord
-from johnny.persistence._fqdn import resolve_fqdn
+from johnny.persistence._fqdn import ensure_ansible_prefix, resolve_fqdn
 from johnny.persistence.models import (
     Event,
     Host,
@@ -140,7 +140,14 @@ class HostService:
             # host.fqdn is the best inventory_hostname proxy we have at
             # rest: it's whatever the plugin's _resolve_fqdn settled on
             # at ingest time, including the inventory_hostname fallback.
-            canonical = resolve_fqdn(latest, inventory_hostname=host.fqdn)
+            #
+            # ensure_ansible_prefix handles a historical bug
+            # (johnny-callback v0.1.2 .. v0.1.4) where _snapshot_play_facts
+            # stored facts with the ansible_ prefix stripped. Those rows
+            # would otherwise canonicalise to their own short fqdn and
+            # never group with their FQDN-form duplicate.
+            normalised = ensure_ansible_prefix(latest)
+            canonical = resolve_fqdn(normalised, inventory_hostname=host.fqdn)
             groups[canonical].append(host)
 
         out: list[MergeGroup] = []
