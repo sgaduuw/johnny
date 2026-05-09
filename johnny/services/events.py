@@ -49,6 +49,7 @@ class EventService:
                 "stdout": e.stdout,
                 "stdout_truncated": e.stdout_truncated,
                 "diff": e.diff,
+                "diff_truncated": e.diff_truncated,
             }
             for e in events
         ]

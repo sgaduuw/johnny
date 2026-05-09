@@ -24,6 +24,7 @@ def _event(
     stdout: str = "",
     stdout_truncated: bool = False,
     diff: str | None = None,
+    diff_truncated: bool = False,
     event_uuid: UUID | None = None,
 ) -> TaskEvent:
     return TaskEvent(
@@ -37,6 +38,7 @@ def _event(
         stdout=stdout,
         stdout_truncated=stdout_truncated,
         diff=diff,
+        diff_truncated=diff_truncated,
     )
 
 
@@ -118,6 +120,7 @@ class TestRecordBatch:
             stdout="rendered foo.conf",
             stdout_truncated=True,
             diff="--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n",
+            diff_truncated=True,
         )
         svc.record_batch(playbook.id, [original])
         ev = session.scalars(select(Event)).one()
@@ -131,6 +134,37 @@ class TestRecordBatch:
         assert ev.stdout_truncated is True
         assert ev.diff is not None
         assert "+new" in ev.diff
+        assert ev.diff_truncated is True
+
+    def test_diff_truncated_defaults_false_for_old_plugin_payloads(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        # Wire-compat assertion: pre-v0.1.6 plugins don't send the
+        # diff_truncated key. The contract default of False must
+        # apply on parse so the server stays backward-compatible
+        # with older controllers under extra="forbid".
+        svc = EventService(session)
+        # Hand-build the event dict the way an old plugin would
+        # (no diff_truncated key) and parse via TaskEvent so the
+        # default kicks in at the wire boundary.
+        wire_dict = {
+            "event_uuid": str(uuid4()),
+            "fqdn": "host.example.com",
+            "task_name": "old plugin task",
+            "task_action": "apt",
+            "status": "ok",
+            "started_at": "2026-05-08T12:00:00+00:00",
+            "duration_ms": 10,
+            "stdout": "",
+            "stdout_truncated": False,
+            "diff": None,
+            # No diff_truncated key — the old shape.
+        }
+        old_payload = TaskEvent.model_validate(wire_dict)
+        assert old_payload.diff_truncated is False
+        svc.record_batch(playbook.id, [old_payload])
+        ev = session.scalars(select(Event)).one()
+        assert ev.diff_truncated is False
 
     def test_round_trips_every_status(
         self, session: Session, playbook: Playbook

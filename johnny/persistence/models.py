@@ -24,6 +24,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -215,6 +216,12 @@ class Event(Base):
     stdout: Mapped[str] = mapped_column(Text, default="")
     stdout_truncated: Mapped[bool] = mapped_column(Boolean, default=False)
     diff: Mapped[str | None] = mapped_column(Text)
+    # server_default mirrors the alembic migration's
+    # ALTER TABLE ADD COLUMN ... DEFAULT false. Without it, alembic
+    # check reports model/schema drift.
+    diff_truncated: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
 
     playbook: Mapped[Playbook] = relationship(back_populates="events")
     host: Mapped[Host] = relationship()

@@ -107,6 +107,11 @@ class TaskEvent(_Strict):
     stdout: str = Field(default="", max_length=STDOUT_MAX)
     stdout_truncated: bool = False
     diff: str | None = Field(default=None, max_length=DIFF_MAX)
+    # Defaults to False so older plugins (no key sent) parse cleanly
+    # under extra="forbid". Server release MUST land before plugin
+    # release that starts emitting this field — old server with
+    # extra="forbid" would 422 on the unknown key.
+    diff_truncated: bool = False
 
 
 class EventsBatch(_Strict):
