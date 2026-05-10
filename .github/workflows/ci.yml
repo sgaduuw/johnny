@@ -45,6 +45,25 @@ jobs:
           poetry run alembic upgrade head
           poetry run alembic check
 
+      # `alembic check` only verifies model/migration consistency on
+      # a fresh schema. The step below also applies the head
+      # migration against a *populated* DB at the previous revision,
+      # which is the case three v0.2.x migrations broke on (see #6).
+      - name: Migration smoke against a populated DB
+        env:
+          DATABASE_URL: sqlite:///./mig-smoke.db
+        run: |
+          PREV=$(poetry run alembic history --indicate-current \
+                 | awk '/->/ {print $1; exit}')
+          if [ -z "$PREV" ] || [ "$PREV" = "<base>" ]; then
+            echo "Only one revision in history; skipping smoke."
+            exit 0
+          fi
+          poetry run alembic upgrade "$PREV"
+          poetry run python -m tests._mig_seed "$DATABASE_URL"
+          poetry run alembic upgrade head
+          poetry run python -m tests._mig_smoke_assert "$DATABASE_URL"
+
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 15
