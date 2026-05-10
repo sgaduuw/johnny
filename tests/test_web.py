@@ -163,6 +163,22 @@ class TestHostDetail:
         assert "Fact history" in body
         assert "ansible_default_ipv4" in body  # raw facts dump
 
+    def test_bare_host_with_no_history_renders(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # A Host row can exist with empty last_facts + no history rows
+        # (e.g. EventService.get_or_create_by_fqdn manufactured one for
+        # an unfacted host). The detail page conditionally branches on
+        # uptime/history; smoke that the template doesn't 500.
+        from johnny.persistence import Host
+        session.add(Host(fqdn="bare.example.com", last_facts={}))
+        session.commit()
+        r = client.get("/h/bare.example.com/")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "bare.example.com" in body
+        assert "No fact snapshots recorded" in body
+
 
 class TestPlaybooksList:
     def test_empty_state_renders(self, client: FlaskClient) -> None:
@@ -192,13 +208,17 @@ class TestPlayStatsFilter:
         assert _play_stats({}) is None
 
     def test_sums_task_counts_across_hosts(self) -> None:
+        # All seven counters are summed: ok/changed/failed/unreachable/
+        # skipped/rescued/ignored. Don't drop any — every counter pair
+        # the dashboard might surface needs an assertion or it'll silently
+        # regress if the filter shape changes.
         stats = {
             "a.example.com": {"ok": 5, "changed": 1, "failed": 0,
                               "unreachable": 0, "skipped": 2,
-                              "rescued": 0, "ignored": 0},
+                              "rescued": 1, "ignored": 3},
             "b.example.com": {"ok": 3, "changed": 2, "failed": 1,
                               "unreachable": 0, "skipped": 0,
-                              "rescued": 0, "ignored": 0},
+                              "rescued": 2, "ignored": 1},
         }
         out = _play_stats(stats)
         assert out is not None
@@ -208,6 +228,8 @@ class TestPlayStatsFilter:
         assert out["failed"] == 1
         assert out["unreachable"] == 0
         assert out["skipped"] == 2
+        assert out["rescued"] == 3
+        assert out["ignored"] == 4
 
     def test_tolerates_missing_keys_in_host_dict(self) -> None:
         # Older or partial wire payloads may omit some counter keys;
@@ -244,6 +266,33 @@ class TestPlaybookDetail:
         assert "web1.example.com" in body  # roster
         assert "install nginx" in body  # event task name
         assert "200ms" in body  # event duration
+
+    def test_running_playbook_with_no_data_renders(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # A play in RUNNING state has no roster, no events, no stats.
+        # The detail template branches on each; smoke that it doesn't
+        # 500 in this state (the most common state when an operator
+        # clicks through mid-play).
+        from johnny.services.plays import PlayService
+        pid = uuid4()
+        PlayService(session).start(
+            PlaybookStart(
+                id=pid,
+                name="midflight.yml",
+                inventory_sources=["inventory.yml"],
+                started_at=datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc),
+                user="ansible",
+            )
+        )
+        session.commit()
+        r = client.get(f"/playbooks/{pid}")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "midflight.yml" in body
+        assert "running" in body
+        assert "No roster recorded" in body
+        assert "No events recorded" in body
 
 
 class TestListSearchAndSort:

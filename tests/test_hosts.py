@@ -145,14 +145,20 @@ class TestHistory:
     def test_returned_in_descending_order(
         self, session: Session, playbook: Playbook
     ) -> None:
+        # Insert in ascending order; verify the service returns them
+        # descending by comparing against the *known* timestamps. The
+        # earlier sorted-against-itself assertion passed regardless of
+        # whether the SQL ORDER BY ran.
         svc = HostService(session)
         t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
         for i in range(3):
             svc.upsert_from_record(playbook.id, t0 + timedelta(days=i), _record())
         rows = svc.history("nas.example.com")
-        assert [r.captured_at for r in rows] == sorted(
-            [r.captured_at for r in rows], reverse=True
-        )
+        assert [r.captured_at for r in rows] == [
+            t0 + timedelta(days=2),
+            t0 + timedelta(days=1),
+            t0,
+        ]
 
     def test_filters_by_since_inclusive(
         self, session: Session, playbook: Playbook

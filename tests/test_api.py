@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from johnny.api import create_app
 from johnny.api.deps import get_session, get_settings
 from johnny.config import Settings
+from johnny.contracts.v1 import DIFF_MAX, STDOUT_MAX
 from johnny.persistence import Event, Host, HostFactsHistory, Playbook
 
 TOKEN = "test-token"
@@ -162,6 +163,9 @@ class TestIngestEvents:
     def test_records_events_idempotently(
         self, client: TestClient, session: Session
     ) -> None:
+        # First-write-wins: re-POSTing the same event_uuids with
+        # *mutated* field values must keep the original payload's
+        # values, not let the second batch overwrite them.
         start = _start_body()
         client.post("/api/v1/playbooks", json=start, headers=AUTH)
         body = _events_body(n=3)
@@ -171,13 +175,73 @@ class TestIngestEvents:
         assert r.status_code == 202
         assert r.json() == {"accepted": 3, "ignored": 0}
 
-        # Re-POST with the same event_uuids — all ignored
+        retried = {
+            "events": [
+                {**ev, "task_name": "WRONG", "status": "failed",
+                 "stdout": "should not persist"}
+                for ev in body["events"]
+            ]
+        }
         r2 = client.post(
-            f"/api/v1/playbooks/{start['id']}/events", json=body, headers=AUTH
+            f"/api/v1/playbooks/{start['id']}/events", json=retried, headers=AUTH
         )
         assert r2.status_code == 202
         assert r2.json() == {"accepted": 0, "ignored": 3}
         assert session.query(Event).count() == 3
+        for ev in session.query(Event).all():
+            assert ev.task_name == "install nginx"
+            assert ev.status.value == "ok"
+
+
+class TestEventTruncationLimits:
+    """Wire-contract caps on stdout / diff are pydantic max_length;
+    FastAPI returns 422 on validation failure. Plugin should truncate
+    upstream and signal via *_truncated; server enforces caps as a
+    backstop. Both sides need a regression test against the pydantic
+    enforcement, otherwise a future contract relax would silently
+    accept oversize bodies."""
+
+    def _events_body_with(self, **overrides: Any) -> dict[str, Any]:
+        body = _events_body(n=1)
+        body["events"][0].update(overrides)
+        return body
+
+    def test_oversize_stdout_returns_422(self, client: TestClient) -> None:
+        start = _start_body()
+        client.post("/api/v1/playbooks", json=start, headers=AUTH)
+        oversize = "x" * (STDOUT_MAX + 1)
+        r = client.post(
+            f"/api/v1/playbooks/{start['id']}/events",
+            json=self._events_body_with(stdout=oversize),
+            headers=AUTH,
+        )
+        assert r.status_code == 422
+        # Verify the error names the offending field, so debugging the
+        # 422 in the wild is straightforward.
+        assert "stdout" in r.text
+
+    def test_oversize_diff_returns_422(self, client: TestClient) -> None:
+        start = _start_body()
+        client.post("/api/v1/playbooks", json=start, headers=AUTH)
+        oversize = "x" * (DIFF_MAX + 1)
+        r = client.post(
+            f"/api/v1/playbooks/{start['id']}/events",
+            json=self._events_body_with(diff=oversize),
+            headers=AUTH,
+        )
+        assert r.status_code == 422
+        assert "diff" in r.text
+
+    def test_at_cap_stdout_accepted(self, client: TestClient) -> None:
+        # Cap value itself is valid — only +1 fails.
+        start = _start_body()
+        client.post("/api/v1/playbooks", json=start, headers=AUTH)
+        r = client.post(
+            f"/api/v1/playbooks/{start['id']}/events",
+            json=self._events_body_with(stdout="x" * STDOUT_MAX),
+            headers=AUTH,
+        )
+        assert r.status_code == 202
 
 
 class TestFinishPlaybook:
