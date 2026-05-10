@@ -1,0 +1,55 @@
+{#- Shared Jinja macros for the list pages.
+
+    sort_link: clickable column header. Renders an HTMX-driven <a>
+    that swaps the surrounding partial in place; falls back to a plain
+    GET when JS/HTMX is unavailable (the href carries the same params).
+
+    search_form: scoped-search input + hidden sort/dir state. The
+    hidden fields persist sort across keystroke-driven swaps; the
+    sort_link macros override them via hx-vals on click.
+
+    Both macros accept `url_kwargs` for endpoints that need path
+    parameters (e.g. group_detail needs `group_name=<name>`); pass an
+    empty dict for parameter-less endpoints.
+-#}
+
+{%- macro sort_link(label, key, current_sort, current_dir, endpoint, target_id, search_form_id, query_str='', url_kwargs={}) -%}
+{%- set is_active = (current_sort == key) -%}
+{%- if is_active and current_dir == 'asc' -%}
+  {%- set next_dir = 'desc' -%}
+{%- else -%}
+  {%- set next_dir = 'asc' -%}
+{%- endif -%}
+<a class="sort-link{% if is_active %} active{% endif %}"
+   href="{{ url_for(endpoint, sort=key, dir=next_dir, q=query_str or none, **url_kwargs) }}"
+   hx-get="{{ url_for(endpoint, **url_kwargs) }}"
+   hx-vals='{"sort": "{{ key }}", "dir": "{{ next_dir }}"}'
+   hx-include="#{{ search_form_id }} input[name=q]"
+   hx-target="#{{ target_id }}"
+   hx-swap="outerHTML"
+   hx-push-url="true">
+  <span>{{ label }}</span>
+  {%- if is_active %}<span class="sort-arrow">{{ '↑' if current_dir == 'asc' else '↓' }}</span>{% endif -%}
+</a>
+{%- endmacro -%}
+
+{%- macro search_form(form_id, endpoint, target_id, query_str, current_sort, current_dir, placeholder, hint, url_kwargs={}) -%}
+{#- Don't set role="search" on the <form>: Pico v2 styles
+    [role="search"] as a grouped pill, which then nests around
+    the input[type=search] pill and renders as two stacked shapes.
+    The input's aria-label="Search" conveys the semantic intent. -#}
+<form id="{{ form_id }}" class="search-bar"
+      hx-get="{{ url_for(endpoint, **url_kwargs) }}"
+      hx-target="#{{ target_id }}"
+      hx-swap="outerHTML"
+      hx-trigger="input changed delay:300ms from:input[type=search], search from:input[type=search], submit"
+      hx-push-url="true">
+  <input type="search" name="q" value="{{ query_str }}"
+         placeholder="{{ placeholder }}"
+         title="{{ hint }}"
+         autocomplete="off"
+         aria-label="Search">
+  <input type="hidden" name="sort" value="{{ current_sort }}">
+  <input type="hidden" name="dir" value="{{ current_dir }}">
+</form>
+{%- endmacro -%}

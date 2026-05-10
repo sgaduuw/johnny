@@ -246,6 +246,133 @@ class TestPlaybookDetail:
         assert "200ms" in body  # event duration
 
 
+class TestListSearchAndSort:
+    """Smoke the scoped-search + sortable-header wiring on the list routes."""
+
+    def _seed_two_plays(self, session: Session) -> tuple[str, str]:
+        """Seed two distinct plays so filter/sort have something to bite."""
+        from sqlalchemy import update
+
+        from johnny.persistence.models import Playbook, PlaybookStatus
+        from johnny.services.plays import PlayService
+
+        svc = PlayService(session)
+        a = PlaybookStart(
+            id=uuid4(),
+            name="alpha-deploy.yml",
+            inventory_sources=["prod.yml"],
+            started_at=datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc),
+            user="ansible",
+        )
+        b = PlaybookStart(
+            id=uuid4(),
+            name="zulu-deploy.yml",
+            inventory_sources=["staging.yml"],
+            started_at=datetime(2026, 5, 9, 12, 0, tzinfo=timezone.utc),
+            user="cron",
+        )
+        svc.start(a)
+        svc.start(b)
+        session.execute(
+            update(Playbook).where(Playbook.id == a.id)
+            .values(status=PlaybookStatus.FAILED)
+        )
+        session.execute(
+            update(Playbook).where(Playbook.id == b.id)
+            .values(status=PlaybookStatus.FINISHED)
+        )
+        session.commit()
+        return str(a.id), str(b.id)
+
+    def test_scoped_status_filter_on_playbooks(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        self._seed_two_plays(session)
+        r = client.get("/playbooks?q=status:failed")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "alpha-deploy.yml" in body
+        assert "zulu-deploy.yml" not in body
+
+    def test_bare_term_matches_name_or_user(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        self._seed_two_plays(session)
+        r = client.get("/playbooks?q=cron")
+        body = r.data.decode()
+        # `cron` is the user on zulu; should appear, alpha shouldn't.
+        assert "zulu-deploy.yml" in body
+        assert "alpha-deploy.yml" not in body
+
+    def test_inventory_scope_matches_json_list_entry(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        self._seed_two_plays(session)
+        r = client.get("/playbooks?q=inventory:prod")
+        body = r.data.decode()
+        assert "alpha-deploy.yml" in body
+        assert "zulu-deploy.yml" not in body
+
+    def test_sort_by_name_asc(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        self._seed_two_plays(session)
+        r = client.get("/playbooks?sort=name&dir=asc")
+        body = r.data.decode()
+        assert body.index("alpha-deploy.yml") < body.index("zulu-deploy.yml")
+
+    def test_sort_by_name_desc(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        self._seed_two_plays(session)
+        r = client.get("/playbooks?sort=name&dir=desc")
+        body = r.data.decode()
+        assert body.index("zulu-deploy.yml") < body.index("alpha-deploy.yml")
+
+    def test_unknown_sort_param_falls_back_to_default(
+        self, client: FlaskClient
+    ) -> None:
+        # Bad params shouldn't 400 a browse interaction.
+        r = client.get("/playbooks?sort=lol&dir=sideways")
+        assert r.status_code == 200
+
+    def test_htmx_request_returns_partial_not_full_page(
+        self, client: FlaskClient
+    ) -> None:
+        r = client.get("/playbooks", headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "<!doctype html>" not in body.lower()
+        assert 'id="plays-tbl"' in body
+
+    def test_full_page_render_includes_html_shell(
+        self, client: FlaskClient
+    ) -> None:
+        r = client.get("/playbooks")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert body.lower().startswith("<!doctype html>")
+        assert 'id="plays-tbl"' in body
+
+    def test_groups_index_search_filters_by_name(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_full_play(session)
+        r = client.get("/?q=name:web")
+        body = r.data.decode()
+        assert "webservers" in body
+        assert "linux" not in body or "linux</strong>" not in body
+
+    def test_group_detail_kernel_scope(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_full_play(session)
+        # Match against the seeded host's kernel substring.
+        r = client.get("/g/all/?q=kernel:6.1")
+        body = r.data.decode()
+        assert "web1.example.com" in body
+
+
 class TestFooterVersion:
     def test_footer_shows_johnny_version(self, client: FlaskClient) -> None:
         from johnny import __version__
