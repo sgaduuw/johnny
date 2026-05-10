@@ -12,8 +12,9 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
 
 from johnny.persistence.models import (
     Group,
@@ -22,6 +23,34 @@ from johnny.persistence.models import (
     Playbook,
     PlaybookHost,
 )
+from johnny.web._search import SearchQuery
+
+# Hosts table on group_detail.
+HOST_SORT_COLUMNS = {
+    "fqdn": Host.fqdn,
+    "default_ipv4": Host.default_ipv4,
+    "distribution": Host.distribution,
+    "kernel": Host.kernel,
+    "memtotal_mb": Host.memtotal_mb,
+    "vcpus": Host.vcpus,
+    "uptime_seconds": Host.uptime_seconds,
+    "last_seen_at": Host.last_seen_at,
+}
+HOST_DEFAULT_SORT = "fqdn"
+HOST_DEFAULT_DIR = "asc"
+HOST_SEARCH_SCOPES = {"fqdn", "os", "kernel", "virt", "ip"}
+HOST_BARE_COLUMNS = (Host.fqdn, Host.distribution, Host.kernel)
+
+# Groups index.
+GROUP_SORT_COLUMNS = {
+    "name": Group.name,
+    "first_seen_at": Group.first_seen_at,
+    "last_seen_at": Group.last_seen_at,
+}
+GROUP_DEFAULT_SORT = "name"
+GROUP_DEFAULT_DIR = "asc"
+GROUP_SEARCH_SCOPES = {"name", "description"}
+GROUP_BARE_COLUMNS = (Group.name, Group.description)
 
 
 class GroupService:
@@ -85,35 +114,56 @@ class GroupService:
 
         self.session.flush()
 
-    def list_with_counts(self) -> list[tuple[Group, int]]:
-        """Every known group with its current member count. `all` is
-        pinned first; the rest are alphabetical."""
+    def list_with_counts(
+        self,
+        sort: str = GROUP_DEFAULT_SORT,
+        direction: str = GROUP_DEFAULT_DIR,
+        query: SearchQuery | None = None,
+    ) -> list[tuple[Group, int]]:
+        """Every known group with its current member count.
+
+        When `sort=name` + `direction=asc` (the default), `all` is
+        pinned first as a UX nicety. Any other sort honors the request
+        as-is — the pin is a default-view convenience, not a hard
+        invariant.
+        """
         count_subq = (
             select(HostGroup.group_id, func.count().label("n"))
             .group_by(HostGroup.group_id)
             .subquery()
         )
-        rows = self.session.execute(
+        stmt: Select = (
             select(Group, func.coalesce(count_subq.c.n, 0))
             .outerjoin(count_subq, count_subq.c.group_id == Group.id)
-        ).all()
-        return sorted(
-            ((g, int(n)) for g, n in rows),
-            key=lambda gn: (gn[0].name != "all", gn[0].name),
         )
+        if query is not None and not query.is_empty():
+            stmt = _apply_group_search(stmt, query)
+        stmt = _apply_group_sort(stmt, sort, direction)
+        rows = self.session.execute(stmt).all()
+        result = [(g, int(n)) for g, n in rows]
+        if sort == GROUP_DEFAULT_SORT and direction == GROUP_DEFAULT_DIR:
+            result.sort(key=lambda gn: (gn[0].name != "all", gn[0].name))
+        return result
 
     def get_by_name(self, name: str) -> Group | None:
         return self.session.scalar(select(Group).where(Group.name == name))
 
-    def hosts_in(self, group: Group) -> list[Host]:
-        return list(
-            self.session.scalars(
-                select(Host)
-                .join(HostGroup, HostGroup.host_id == Host.id)
-                .where(HostGroup.group_id == group.id)
-                .order_by(Host.fqdn)
-            )
+    def hosts_in(
+        self,
+        group: Group,
+        sort: str = HOST_DEFAULT_SORT,
+        direction: str = HOST_DEFAULT_DIR,
+        query: SearchQuery | None = None,
+    ) -> list[Host]:
+        stmt: Select = (
+            select(Host)
+            .join(HostGroup, HostGroup.host_id == Host.id)
+            .where(HostGroup.group_id == group.id)
         )
+        if query is not None and not query.is_empty():
+            stmt = _apply_host_search(stmt, query)
+        stmt = _apply_host_sort(stmt, sort, direction)
+        return list(self.session.scalars(stmt))
 
     def set_description(self, name: str, description: str | None) -> Group:
         """Set or clear a group's free-text description. Raises
@@ -195,3 +245,74 @@ class GroupService:
         self.session.flush()
 
         return {"groups": len(group_seen), "memberships": memberships}
+
+
+def _apply_host_sort(stmt: Select, sort: str, direction: str) -> Select:
+    column = HOST_SORT_COLUMNS.get(sort, HOST_SORT_COLUMNS[HOST_DEFAULT_SORT])
+    if direction == "desc":
+        return stmt.order_by(column.desc())
+    return stmt.order_by(column.asc())
+
+
+def _apply_host_search(stmt: Select, query: SearchQuery) -> Select:
+    for scope, values in query.scopes.items():
+        if scope == "fqdn":
+            stmt = stmt.where(or_(*(Host.fqdn.ilike(f"%{v}%") for v in values)))
+        elif scope == "os":
+            # Matches distribution name or version (5.5 in Debian 5.5).
+            stmt = stmt.where(
+                or_(
+                    *(
+                        or_(
+                            Host.distribution.ilike(f"%{v}%"),
+                            Host.distribution_version.ilike(f"%{v}%"),
+                        )
+                        for v in values
+                    )
+                )
+            )
+        elif scope == "kernel":
+            stmt = stmt.where(or_(*(Host.kernel.ilike(f"%{v}%") for v in values)))
+        elif scope == "virt":
+            stmt = stmt.where(
+                or_(
+                    *(
+                        or_(
+                            Host.virt_role.ilike(f"%{v}%"),
+                            Host.virt_type.ilike(f"%{v}%"),
+                        )
+                        for v in values
+                    )
+                )
+            )
+        elif scope == "ip":
+            stmt = stmt.where(
+                or_(*(Host.default_ipv4.ilike(f"%{v}%") for v in values))
+            )
+    for term in query.bare:
+        stmt = stmt.where(
+            or_(*(col.ilike(f"%{term}%") for col in HOST_BARE_COLUMNS))
+        )
+    return stmt
+
+
+def _apply_group_sort(stmt: Select, sort: str, direction: str) -> Select:
+    column = GROUP_SORT_COLUMNS.get(sort, GROUP_SORT_COLUMNS[GROUP_DEFAULT_SORT])
+    if direction == "desc":
+        return stmt.order_by(column.desc())
+    return stmt.order_by(column.asc())
+
+
+def _apply_group_search(stmt: Select, query: SearchQuery) -> Select:
+    for scope, values in query.scopes.items():
+        if scope == "name":
+            stmt = stmt.where(or_(*(Group.name.ilike(f"%{v}%") for v in values)))
+        elif scope == "description":
+            stmt = stmt.where(
+                or_(*(Group.description.ilike(f"%{v}%") for v in values))
+            )
+    for term in query.bare:
+        stmt = stmt.where(
+            or_(*(col.ilike(f"%{term}%") for col in GROUP_BARE_COLUMNS))
+        )
+    return stmt

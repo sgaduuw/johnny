@@ -7,6 +7,7 @@
   <title>{% block title %}johnny{% endblock %}</title>
   <link rel="stylesheet"
         href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.amber.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.6/dist/htmx.min.js"></script>
   <style>
     /* Play / event status colors. Pico amber doesn't expose semantic
        state colors as CSS variables; using CSS named colors keeps
@@ -42,6 +43,27 @@
     }
     .group-card { margin-bottom: 0; }
     .group-card header { padding-bottom: 0.5rem; }
+    /* Sortable header link: subdued by default, primary when active.
+       The arrow glyph lives in the link text so it doesn't waste a
+       gutter for non-sortable columns. */
+    th a.sort-link {
+      color: inherit;
+      text-decoration: none;
+      display: inline-flex;
+      gap: 0.25rem;
+      align-items: baseline;
+    }
+    th a.sort-link:hover { text-decoration: underline; }
+    th a.sort-link.active { color: var(--pico-primary); }
+    th a.sort-link .sort-arrow { font-size: 0.75em; opacity: 0.7; }
+    /* Scoped-search input: shrink so it doesn't dominate the layout,
+       but stay wide enough for `user:eelco status:failed nginx`. */
+    .search-bar { margin-bottom: 1rem; }
+    .search-bar input[type="search"] { max-width: 32rem; }
+    .htmx-request .search-bar input { opacity: 0.6; }
+    /* Sort bar on cards-style lists (no thead to host sort links). */
+    .sort-bar { margin-bottom: 0.5rem; }
+    .sort-bar a.sort-link { margin: 0 0.15rem; }
   </style>
 </head>
 <body style="--truncate-width: {{ settings.johnny_truncate_chars }}ch">

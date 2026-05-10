@@ -1,0 +1,66 @@
+{%- from "_macros.html" import sort_link, search_form -%}
+{#- Partial: search form + sortable table for the playbooks list.
+    Wrapped in a single root <section id="plays-tbl"> so the whole
+    thing (form included) swaps as a unit on every HTMX request. -#}
+<section id="plays-tbl">
+  {{ search_form(
+       'plays-search', 'playbooks_list', 'plays-tbl',
+       query_str, current_sort, current_dir,
+       'Search… e.g. user:eelco status:failed nginx',
+       'Scoped search.
+Scopes: name:, user:, status:, inventory:.
+status values: running, finished, failed.
+Comma OR within scope: status:failed,unreachable.
+Quote whitespace: name:"deploy nginx".
+Brackets for values containing ":" (IPv6-style): ip:[fe80::1].
+Bare terms match name + user.'
+  ) }}
+  <p><small>{{ plays|length }} shown.</small></p>
+  {% if plays %}
+  <figure>
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">{{ sort_link('Started', 'started_at', current_sort, current_dir, 'playbooks_list', 'plays-tbl', 'plays-search', query_str) }}</th>
+          <th scope="col">{{ sort_link('Name', 'name', current_sort, current_dir, 'playbooks_list', 'plays-tbl', 'plays-search', query_str) }}</th>
+          <th scope="col">{{ sort_link('User', 'user', current_sort, current_dir, 'playbooks_list', 'plays-tbl', 'plays-search', query_str) }}</th>
+          <th scope="col">{{ sort_link('Status', 'status', current_sort, current_dir, 'playbooks_list', 'plays-tbl', 'plays-search', query_str) }}</th>
+          <th scope="col">Duration</th>
+          <th scope="col">Outcome</th>
+          <th scope="col">Inventory</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for p in plays %}
+        <tr>
+          <td><small title="{{ p.started_at }}">{{ p.started_at | naturaltime }}</small></td>
+          <td><a href="{{ url_for('playbook_detail', playbook_id=p.id) }}">{{ p.name }}</a></td>
+          <td><code>{{ p.user }}</code></td>
+          <td><span class="play-status-{{ p.status.value }}">{{ p.status.value }}</span></td>
+          <td>
+            {%- if p.finished_at -%}
+              {{ ((p.finished_at - p.started_at).total_seconds() | int) }}s
+            {%- else -%}—{%- endif -%}
+          </td>
+          <td>
+            {%- set t = p.stats | play_stats -%}
+            {%- if t -%}
+              <small>
+                {{ t.hosts }} host{% if t.hosts != 1 %}s{% endif %} ·
+                {{ t.ok }} ok
+                {%- if t.changed %}, {{ t.changed }} changed{% endif -%}
+                {%- if t.failed %}, <span class="play-status-failed">{{ t.failed }} failed</span>{% endif -%}
+                {%- if t.unreachable %}, <span class="play-status-failed">{{ t.unreachable }} unreachable</span>{% endif -%}
+              </small>
+            {%- else -%}—{%- endif -%}
+          </td>
+          <td><small>{{ p.inventory_sources | join(', ') }}</small></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </figure>
+  {% else %}
+  <p><em>{% if query_str %}No playbooks match this query.{% else %}No playbooks recorded yet.{% endif %}</em></p>
+  {% endif %}
+</section>
