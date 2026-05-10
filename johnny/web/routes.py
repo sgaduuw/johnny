@@ -118,7 +118,11 @@ def register_routes(app: Flask) -> None:
         if host is None:
             abort(404)
         history = svc.history(fqdn)
-        return render_template("host_detail.html", host=host, history=history)
+        return render_template(
+            pick("host_detail.html", "_host_detail_live.html"),
+            host=host,
+            history=history,
+        )
 
     @app.route("/playbooks")
     def playbooks_list() -> str:

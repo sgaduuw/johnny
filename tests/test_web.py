@@ -179,6 +179,49 @@ class TestHostDetail:
         assert "bare.example.com" in body
         assert "No fact snapshots recorded" in body
 
+    def test_live_region_polls_every_30s(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # The auto-refresh layer is a poll on the live region with
+        # `every 30s`. Lock the cadence so we notice if someone
+        # accidentally cranks it.
+        _seed_full_play(session)
+        r = client.get("/h/web1.example.com/")
+        body = r.data.decode()
+        assert 'id="host-live"' in body
+        assert 'hx-trigger="every 30s"' in body
+        assert 'hx-swap="outerHTML"' in body
+
+    def test_htmx_request_returns_live_partial_only(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # HX-Request: rendered fragment is just the live region.
+        # No <!doctype html>, no breadcrumb, no raw-facts dump.
+        # Raw facts are explicitly out of scope per #14 item 2.
+        _seed_full_play(session)
+        r = client.get(
+            "/h/web1.example.com/", headers={"HX-Request": "true"}
+        )
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "<!doctype html>" not in body.lower()
+        assert "Raw facts" not in body
+        assert 'id="host-live"' in body
+        # The live partial does include the metric grid + history.
+        assert "Last seen" in body
+        assert "Fact history" in body
+
+    def test_full_page_includes_raw_facts_dump(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # Plain GET still includes the raw-facts dump outside the
+        # poll region — a manual reload is the way to refresh it.
+        _seed_full_play(session)
+        r = client.get("/h/web1.example.com/")
+        body = r.data.decode()
+        assert "Raw facts" in body
+        assert "ansible_default_ipv4" in body
+
 
 class TestPlaybooksList:
     def test_empty_state_renders(self, client: FlaskClient) -> None:
