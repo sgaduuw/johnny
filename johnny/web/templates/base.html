@@ -64,6 +64,9 @@
     /* Sort bar on cards-style lists (no thead to host sort links). */
     .sort-bar { margin-bottom: 0.5rem; }
     .sort-bar a.sort-link { margin: 0 0.15rem; }
+    /* Load-more row: a tbody-resident <tr> swapped via outerHTML. */
+    td.load-more-cell { text-align: center; padding: 1rem 0; }
+    .load-more-btn { margin: 0; max-width: 12rem; }
   </style>
 </head>
 <body style="--truncate-width: {{ settings.johnny_truncate_chars }}ch">

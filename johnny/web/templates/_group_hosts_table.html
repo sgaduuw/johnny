@@ -13,7 +13,6 @@ Brackets for ":" in values (IPv6-style): ip:[fe80::1].
 Bare terms match fqdn + os + kernel.',
        url_kwargs
   ) }}
-  <p><small>{{ hosts|length }} host{{ '' if hosts|length == 1 else 's' }} shown.</small></p>
   {% if hosts %}
   <figure>
     <table>
@@ -31,27 +30,7 @@ Bare terms match fqdn + os + kernel.',
         </tr>
       </thead>
       <tbody>
-      {% for h in hosts %}
-        <tr>
-          <td><a href="{{ url_for('host_detail', fqdn=h.fqdn) }}">{{ h.fqdn }}</a></td>
-          <td>{{ h.default_ipv4 or '—' }}</td>
-          <td>
-            {%- if h.distribution -%}
-              {{ h.distribution }}{% if h.distribution_version and h.distribution_version != 'NA' %} {{ h.distribution_version }}{% endif %}
-            {%- else -%}—{%- endif -%}
-          </td>
-          <td class="truncate" title="{{ h.kernel or '' }}">{{ h.kernel or '—' }}</td>
-          <td>
-            {%- if h.virt_role -%}
-              {{ h.virt_role }}{% if h.virt_type and h.virt_type != 'NA' %} / {{ h.virt_type }}{% endif %}
-            {%- else -%}—{%- endif -%}
-          </td>
-          <td>{{ h.memtotal_mb | mem_gb }}</td>
-          <td>{{ h.vcpus or '—' }}</td>
-          <td>{{ h.uptime_seconds | uptime }}</td>
-          <td><small title="{{ h.last_seen_at }}">{{ h.last_seen_at | naturaltime }}</small></td>
-        </tr>
-      {% endfor %}
+        {% include "_group_hosts_rows.html" %}
       </tbody>
     </table>
   </figure>

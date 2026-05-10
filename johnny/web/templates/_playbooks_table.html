@@ -15,7 +15,6 @@ Quote whitespace: name:"deploy nginx".
 Brackets for values containing ":" (IPv6-style): ip:[fe80::1].
 Bare terms match name + user.'
   ) }}
-  <p><small>{{ plays|length }} shown.</small></p>
   {% if plays %}
   <figure>
     <table>
@@ -31,32 +30,7 @@ Bare terms match name + user.'
         </tr>
       </thead>
       <tbody>
-      {% for p in plays %}
-        <tr>
-          <td><small title="{{ p.started_at }}">{{ p.started_at | naturaltime }}</small></td>
-          <td><a href="{{ url_for('playbook_detail', playbook_id=p.id) }}">{{ p.name }}</a></td>
-          <td><code>{{ p.user }}</code></td>
-          <td><span class="play-status-{{ p.status.value }}">{{ p.status.value }}</span></td>
-          <td>
-            {%- if p.finished_at -%}
-              {{ ((p.finished_at - p.started_at).total_seconds() | int) }}s
-            {%- else -%}—{%- endif -%}
-          </td>
-          <td>
-            {%- set t = p.stats | play_stats -%}
-            {%- if t -%}
-              <small>
-                {{ t.hosts }} host{% if t.hosts != 1 %}s{% endif %} ·
-                {{ t.ok }} ok
-                {%- if t.changed %}, {{ t.changed }} changed{% endif -%}
-                {%- if t.failed %}, <span class="play-status-failed">{{ t.failed }} failed</span>{% endif -%}
-                {%- if t.unreachable %}, <span class="play-status-failed">{{ t.unreachable }} unreachable</span>{% endif -%}
-              </small>
-            {%- else -%}—{%- endif -%}
-          </td>
-          <td><small>{{ p.inventory_sources | join(', ') }}</small></td>
-        </tr>
-      {% endfor %}
+        {% include "_playbooks_rows.html" %}
       </tbody>
     </table>
   </figure>
