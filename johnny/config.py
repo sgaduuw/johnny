@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # than silently accepting requests.
     johnny_api_token: str | None = None
 
+    # Width budget (in `ch` units) for table cells that opt into the
+    # `.truncate` CSS class. Beyond this, the cell shows an ellipsis
+    # and the full value is available via the cell's title attribute.
+    # Read by johnny-web at request time via a context processor.
+    johnny_truncate_chars: int = 15
+
 
 @lru_cache
 def get_settings() -> Settings:

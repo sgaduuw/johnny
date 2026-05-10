@@ -1,10 +1,26 @@
 {% extends "base.html" %}
-{% block title %}hosts | johnny{% endblock %}
+{% block title %}{{ group.name }} | johnny{% endblock %}
 {% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="{{ url_for('index') }}">groups</a></li>
+    <li>{{ group.name }}</li>
+  </ul>
+</nav>
+
 <hgroup>
-  <h2>Hosts</h2>
-  <p>{{ hosts|length }} known.</p>
+  <h2>{{ group.name }}</h2>
+  <p>
+    {{ hosts|length }} host{{ '' if hosts|length == 1 else 's' }}
+    · first seen <span title="{{ group.first_seen_at }}">{{ group.first_seen_at | naturaltime }}</span>
+    · last seen <span title="{{ group.last_seen_at }}">{{ group.last_seen_at | naturaltime }}</span>
+  </p>
 </hgroup>
+
+{% if group.description %}
+<blockquote>{{ group.description }}</blockquote>
+{% endif %}
+
 {% if hosts %}
 <figure>
   <table>
@@ -31,9 +47,7 @@
             {{ h.distribution }}{% if h.distribution_version and h.distribution_version != 'NA' %} {{ h.distribution_version }}{% endif %}
           {%- else -%}—{%- endif -%}
         </td>
-        <td>
-          {{ h.kernel or '—' }}
-        </td>
+        <td class="truncate" title="{{ h.kernel or '' }}">{{ h.kernel or '—' }}</td>
         <td>
           {%- if h.virt_role -%}
             {{ h.virt_role }}{% if h.virt_type and h.virt_type != 'NA' %} / {{ h.virt_type }}{% endif %}
@@ -49,6 +63,6 @@
   </table>
 </figure>
 {% else %}
-<p><em>No hosts seen yet. Run a playbook with the johnny callback plugin enabled.</em></p>
+<p><em>No hosts currently in this group.</em></p>
 {% endif %}
 {% endblock %}

@@ -225,3 +225,72 @@ class Event(Base):
 
     playbook: Mapped[Playbook] = relationship(back_populates="events")
     host: Mapped[Host] = relationship()
+
+
+class Group(Base):
+    """A named Ansible group.
+
+    Source of truth for "current membership" is `host_groups`, which is
+    maintained on ingest from `playbook_hosts.groups_json` (the
+    immutable per-run audit log). Same shape as `host_facts_history`
+    vs `host.last_facts`: the JSON column is the audit trail; the
+    normalized table is the derived view.
+    """
+
+    __tablename__ = "groups"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    first_seen_at: Mapped[datetime] = mapped_column(UtcDateTime())
+    last_seen_at: Mapped[datetime] = mapped_column(UtcDateTime(), index=True)
+
+    members: Mapped[list[HostGroup]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
+
+
+class HostGroup(Base):
+    """Current observed membership: this host is in this group as of
+    `last_seen_at` (the most recent playbook_hosts row for the host
+    that listed this group). Maintained by GroupService.upsert_membership
+    on every facts batch."""
+
+    __tablename__ = "host_groups"
+
+    host_id: Mapped[int] = mapped_column(
+        ForeignKey("hosts.id", ondelete="CASCADE"), primary_key=True
+    )
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(UtcDateTime())
+    last_playbook_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("playbooks.id", ondelete="SET NULL")
+    )
+
+    host: Mapped[Host] = relationship()
+    group: Mapped[Group] = relationship(back_populates="members")
+
+
+class GroupParent(Base):
+    """Parent-child relationship between groups (Ansible nesting).
+
+    Self-referential M:N. Modelled as a DAG: a group can have multiple
+    parents (Ansible permits this). Empty in v2.0; population path
+    (plugin-sent topology vs operator CLI) is a separate change. See
+    CONTEXT.md "Group hierarchy".
+    """
+
+    __tablename__ = "group_parents"
+
+    child_id: Mapped[int] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    parent_id: Mapped[int] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(UtcDateTime())
+
+    child: Mapped[Group] = relationship(foreign_keys=[child_id])
+    parent: Mapped[Group] = relationship(foreign_keys=[parent_id])

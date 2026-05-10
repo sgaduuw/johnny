@@ -26,18 +26,20 @@
 
 <h3>Roster <small>({{ roster|length }})</small></h3>
 {% if roster %}
-<table>
-  <thead><tr><th scope="col">Host</th><th scope="col">inventory_hostname</th><th scope="col">Groups</th></tr></thead>
-  <tbody>
-  {% for m in roster %}
-    <tr>
-      <td><a href="{{ url_for('host_detail', fqdn=m.host.fqdn) }}">{{ m.host.fqdn }}</a></td>
-      <td><code>{{ m.inventory_hostname }}</code></td>
-      <td><small>{{ m.groups | join(', ') }}</small></td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
+<figure>
+  <table>
+    <thead><tr><th scope="col">Host</th><th scope="col">inventory_hostname</th><th scope="col">Groups</th></tr></thead>
+    <tbody>
+    {% for m in roster %}
+      <tr>
+        <td><a href="{{ url_for('host_detail', fqdn=m.host.fqdn) }}">{{ m.host.fqdn }}</a></td>
+        <td><code>{{ m.inventory_hostname }}</code></td>
+        <td class="wrap-cell"><small>{{ m.groups | join(', ') }}</small></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</figure>
 {% else %}
 <p><em>No roster recorded (no facts batch arrived for this playbook).</em></p>
 {% endif %}

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from johnny.config import get_settings
 from johnny.persistence import make_engine
 from johnny.services.events import EventService
+from johnny.services.groups import GroupService
 from johnny.services.hosts import HostService
 
 
@@ -119,6 +120,49 @@ def dedupe_hosts(dry_run: bool) -> None:
                 f"{orphans_deleted} orphan hosts deleted; "
                 f"skipped: {skipped} groups"
             )
+
+
+@cli.command("groups-rebuild")
+def groups_rebuild() -> None:
+    """Rebuild groups + host_groups from playbook_hosts.groups_json.
+
+    One-shot backfill for databases that pre-date the Groups model.
+    Walks every playbook_hosts row in chronological order, upserts a
+    Group per name observed, and replaces host_groups with the latest
+    play's membership per host. Existing Group descriptions are
+    preserved. Idempotent: safe to re-run.
+    """
+    engine = make_engine(get_settings().database_url)
+    with Session(engine) as session:
+        result = GroupService(session).rebuild_from_history()
+        session.commit()
+    click.echo(
+        f"rebuilt: {result['groups']} groups, "
+        f"{result['memberships']} host-group memberships"
+    )
+
+
+@cli.group("group")
+def group_cli() -> None:
+    """Per-group operations."""
+
+
+@group_cli.command("describe")
+@click.argument("name")
+@click.argument("description")
+def group_describe(name: str, description: str) -> None:
+    """Set the free-text description on a known group.
+
+    Pass an empty string to clear the description.
+    """
+    engine = make_engine(get_settings().database_url)
+    with Session(engine) as session:
+        try:
+            GroupService(session).set_description(name, description or None)
+        except LookupError as e:
+            raise click.ClickException(str(e)) from None
+        session.commit()
+    click.echo(f"described: {name}")
 
 
 if __name__ == "__main__":

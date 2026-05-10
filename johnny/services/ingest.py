@@ -21,6 +21,7 @@ from johnny.contracts.v1 import (
     PlaybookStart,
 )
 from johnny.services.events import EventService
+from johnny.services.groups import GroupService
 from johnny.services.hosts import HostService
 from johnny.services.plays import PlayService
 
@@ -31,6 +32,7 @@ class CallbackIngest:
         self.hosts = HostService(session)
         self.events = EventService(session)
         self.plays = PlayService(session)
+        self.groups = GroupService(session)
 
     def start_playbook(self, payload: PlaybookStart) -> None:
         self.plays.start(payload)
@@ -54,6 +56,12 @@ class CallbackIngest:
                 host.id,
                 record.inventory_hostname,
                 list(record.groups),
+            )
+            self.groups.upsert_membership(
+                host.id,
+                list(record.groups),
+                payload.captured_at,
+                playbook_id,
             )
             upserted += 1
         return (upserted, 0)

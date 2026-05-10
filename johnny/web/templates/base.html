@@ -17,16 +17,41 @@
     /* Tighten table density a touch — johnny's tables are wide. */
     table { font-size: 0.95rem; }
     pre   { font-size: 0.85rem; }
+    /* Don't wrap individual cell values; the surrounding <figure>
+       gives horizontal scroll when the row outgrows the viewport.
+       Cells with prose-y content (e.g. comma-joined group lists)
+       opt back into wrapping with class="wrap-cell". */
+    td, th { white-space: nowrap; }
+    td.wrap-cell, th.wrap-cell { white-space: normal; }
+    /* Truncate freakishly long values (OpenBSD's
+       "GENERIC.MP#82 amd64" kernel string is the canonical offender)
+       to a fixed character budget; the full value stays available
+       via the cell's title attribute on hover. Width is configurable
+       via JOHNNY_TRUNCATE_CHARS; the var() fallback keeps the rule
+       sensible if the inline override is missing. */
+    td.truncate {
+      max-width: var(--truncate-width, 15ch);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* Groups overview cards: auto-fill grid that wraps before
+       columns get too narrow. Pico's bare `.grid` is equal-column
+       no-wrap, which collapses awkwardly when there are many cards. */
+    .groups-grid {
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    }
+    .group-card { margin-bottom: 0; }
+    .group-card header { padding-bottom: 0.5rem; }
   </style>
 </head>
-<body>
+<body style="--truncate-width: {{ settings.johnny_truncate_chars }}ch">
   <main class="container">
     <nav>
       <ul>
         <li><a href="{{ url_for('index') }}"><strong>johnny</strong></a></li>
       </ul>
       <ul>
-        <li><a href="{{ url_for('index') }}">hosts</a></li>
+        <li><a href="{{ url_for('index') }}">groups</a></li>
         <li><a href="{{ url_for('playbooks_list') }}">playbooks</a></li>
       </ul>
     </nav>

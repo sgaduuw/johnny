@@ -16,10 +16,16 @@ controller.
 
 ## What it shows you
 
+- **Groups**: the front page is a card grid of every Ansible group
+  observed across your fleet, each card showing the group's name,
+  current member count, and an optional operator-set description.
+  `all` is pinned first; the rest follow alphabetically. Click a
+  card to drill into the group's hosts at `/g/<group>/`.
 - **Hosts**: every host that's ever been touched by a play, with
-  IPv4, virt role/type, memory, vCPUs, uptime (snapshot), and how
-  long ago you last saw it. Click through for the full
-  `ansible_facts` dump and the history of fact snapshots.
+  IPv4, OS, kernel, virt role/type, memory, vCPUs, uptime
+  (snapshot), and how long ago you last saw it. Click through to
+  `/h/<fqdn>/` for the full `ansible_facts` dump and the history of
+  fact snapshots.
 - **Playbooks**: every play johnny has received, with status
   (running/finished/failed), duration, user, inventory, and tags.
   Click through for the per-host roster and the per-task event
@@ -124,6 +130,7 @@ Loaded from `.env` (gitignored) or shell environment.
 | `PRUNE_INTERVAL_SECONDS`| `johnny-tasks`        | `86400` (24 h)                |
 | `WEB_PORT`              | host (compose port)   | `8000`                        |
 | `API_PORT`              | host (compose port)   | `8001`                        |
+| `JOHNNY_TRUNCATE_CHARS` | `johnny-web`          | `15` (cell ellipsis budget)   |
 
 `johnny-api` returns 503 on every request if `JOHNNY_API_TOKEN` is
 unset — intentional fail-loud, never silently accepts unauthenticated
@@ -146,7 +153,7 @@ ingest.
 
 ```sh
 poetry install
-poetry run pytest                                       # 71 tests, ~1s
+poetry run pytest                                       # 115 tests, ~1s
 poetry run ruff check johnny/ tests/
 poetry run alembic upgrade head                         # apply schema
 poetry run uvicorn 'johnny.api:create_app' --factory \
@@ -154,6 +161,9 @@ poetry run uvicorn 'johnny.api:create_app' --factory \
 poetry run gunicorn -w 2 -b 0.0.0.0:8000 \
     'johnny.web:create_app()'                           # web tier
 poetry run johnny prune --older-than-days 30            # CLI sweep
+poetry run johnny groups-rebuild                        # backfill groups
+poetry run johnny group describe webservers "..."       # set description
+poetry run python scripts/seed_mock.py                  # demo fleet data
 ```
 
 The Dockerfile has separate `test` and `prod` stages; CI builds

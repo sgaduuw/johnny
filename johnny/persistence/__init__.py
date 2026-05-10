@@ -6,8 +6,11 @@ from johnny.persistence.engine import make_engine
 from johnny.persistence.models import (
     Base,
     Event,
+    Group,
+    GroupParent,
     Host,
     HostFactsHistory,
+    HostGroup,
     Playbook,
     PlaybookHost,
     PlaybookStatus,
@@ -17,8 +20,11 @@ from johnny.persistence.models import (
 __all__ = [
     "Base",
     "Event",
+    "Group",
+    "GroupParent",
     "Host",
     "HostFactsHistory",
+    "HostGroup",
     "Playbook",
     "PlaybookHost",
     "PlaybookStatus",

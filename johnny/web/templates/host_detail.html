@@ -3,7 +3,7 @@
 {% block content %}
 <nav aria-label="breadcrumb">
   <ul>
-    <li><a href="{{ url_for('index') }}">hosts</a></li>
+    <li><a href="{{ url_for('index') }}">groups</a></li>
     <li>{{ host.fqdn }}</li>
   </ul>
 </nav>
@@ -52,17 +52,19 @@
 
 <h3>Fact history <small>({{ history|length }})</small></h3>
 {% if history %}
-<table>
-  <thead><tr><th scope="col">Captured</th><th scope="col">Playbook</th></tr></thead>
-  <tbody>
-  {% for h in history %}
-    <tr>
-      <td><small title="{{ h.captured_at }}">{{ h.captured_at | naturaltime }}</small></td>
-      <td><a href="{{ url_for('playbook_detail', playbook_id=h.playbook_id) }}"><code>{{ h.playbook_id }}</code></a></td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
+<figure>
+  <table>
+    <thead><tr><th scope="col">Captured</th><th scope="col">Playbook</th></tr></thead>
+    <tbody>
+    {% for h in history %}
+      <tr>
+        <td><small title="{{ h.captured_at }}">{{ h.captured_at | naturaltime }}</small></td>
+        <td><a href="{{ url_for('playbook_detail', playbook_id=h.playbook_id) }}"><code>{{ h.playbook_id }}</code></a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</figure>
 {% else %}
 <p><em>No fact snapshots recorded.</em></p>
 {% endif %}

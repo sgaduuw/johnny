@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}groups | johnny{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Groups</h2>
+  <p>{{ groups|length }} known.</p>
+</hgroup>
+{% if groups %}
+<div class="grid groups-grid">
+  {% for group, count in groups %}
+  <article class="group-card">
+    <header>
+      <a href="{{ url_for('group_detail', group_name=group.name) }}">
+        <strong>{{ group.name }}</strong>
+      </a>
+    </header>
+    <p>
+      <strong>{{ count }}</strong> host{{ '' if count == 1 else 's' }}
+    </p>
+    {% if group.description %}
+    <small>{{ group.description }}</small>
+    {% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<p><em>No groups seen yet. Run a playbook with the johnny callback plugin enabled.</em></p>
+{% endif %}
+{% endblock %}

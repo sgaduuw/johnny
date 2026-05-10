@@ -46,6 +46,10 @@ def create_app(engine_factory: EngineFactory | None = None) -> Flask:
     app.add_template_filter(_mem_gb, "mem_gb")
     app.add_template_filter(_play_stats, "play_stats")
 
+    @app.context_processor
+    def _inject_settings() -> dict[str, object]:
+        return {"settings": get_settings()}
+
     from johnny.web.routes import register_routes
 
     register_routes(app)

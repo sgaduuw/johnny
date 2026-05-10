@@ -57,7 +57,7 @@ def _seed_full_play(session: Session) -> str:
                 FactRecord(
                     fqdn="web1.example.com",
                     inventory_hostname="web1",
-                    groups=["webservers", "linux"],
+                    groups=["all", "webservers", "linux"],
                     ansible_facts={
                         "ansible_default_ipv4": {"address": "10.0.0.1"},
                         "ansible_uptime_seconds": 86400,
@@ -105,37 +105,58 @@ def _seed_full_play(session: Session) -> str:
     return str(start.id)
 
 
-class TestHostsList:
+class TestGroupsIndex:
     def test_empty_state_renders(self, client: FlaskClient) -> None:
         r = client.get("/")
         assert r.status_code == 200
-        assert b"No hosts seen yet" in r.data
+        assert b"No groups seen yet" in r.data
 
-    def test_seeded_host_appears(
+    def test_seeded_groups_appear_with_all_pinned(
         self, client: FlaskClient, session: Session
     ) -> None:
         _seed_full_play(session)
         r = client.get("/")
         assert r.status_code == 200
         body = r.data.decode()
+        # Three groups observed: all, webservers, linux. `all` is pinned
+        # first; the other two follow alphabetically.
+        assert body.index("all") < body.index("linux") < body.index("webservers")
+        # Each card has an href to /g/<name>/.
+        assert 'href="/g/all/"' in body
+        assert 'href="/g/webservers/"' in body
+
+
+class TestGroupDetail:
+    def test_404_for_unknown_group(self, client: FlaskClient) -> None:
+        r = client.get("/g/no-such-group/")
+        assert r.status_code == 404
+
+    def test_seeded_group_lists_member_host(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_full_play(session)
+        r = client.get("/g/all/")
+        assert r.status_code == 200
+        body = r.data.decode()
         assert "web1.example.com" in body
         assert "10.0.0.1" in body
         assert "4 GB" in body  # memtotal_mb=4096 -> 4 GB via mem_gb filter
-        # OS column: distribution + version. Kernel column: kernel.
         assert "Debian 12.5" in body
         assert "6.1.0-26-amd64" in body
+        # Member host link points at /h/<fqdn>/ in the new scheme.
+        assert 'href="/h/web1.example.com/"' in body
 
 
 class TestHostDetail:
     def test_404_for_unknown_host(self, client: FlaskClient) -> None:
-        r = client.get("/hosts/never.seen.com")
+        r = client.get("/h/never.seen.com/")
         assert r.status_code == 404
 
     def test_seeded_host_renders(
         self, client: FlaskClient, session: Session
     ) -> None:
         _seed_full_play(session)
-        r = client.get("/hosts/web1.example.com")
+        r = client.get("/h/web1.example.com/")
         assert r.status_code == 200
         body = r.data.decode()
         assert "web1.example.com" in body
