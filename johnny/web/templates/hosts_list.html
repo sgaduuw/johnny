@@ -25,14 +25,14 @@
     {% for h in hosts %}
       <tr>
         <td><a href="{{ url_for('host_detail', fqdn=h.fqdn) }}">{{ h.fqdn }}</a></td>
-        <td><code>{{ h.default_ipv4 or '—' }}</code></td>
+        <td>{{ h.default_ipv4 or '—' }}</td>
         <td>
           {%- if h.distribution -%}
             {{ h.distribution }}{% if h.distribution_version and h.distribution_version != 'NA' %} {{ h.distribution_version }}{% endif %}
           {%- else -%}—{%- endif -%}
         </td>
         <td>
-          {%- if h.kernel -%}<code>{{ h.kernel }}</code>{%- else -%}—{%- endif -%}
+          {{ h.kernel or '—' }}
         </td>
         <td>
           {%- if h.virt_role -%}
