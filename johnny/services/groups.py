@@ -40,6 +40,7 @@ HOST_DEFAULT_SORT = "fqdn"
 HOST_DEFAULT_DIR = "asc"
 HOST_SEARCH_SCOPES = {"fqdn", "os", "kernel", "virt", "ip"}
 HOST_BARE_COLUMNS = (Host.fqdn, Host.distribution, Host.kernel)
+HOST_PAGE_SIZE = 50
 
 # Groups index.
 GROUP_SORT_COLUMNS = {
@@ -154,7 +155,13 @@ class GroupService:
         sort: str = HOST_DEFAULT_SORT,
         direction: str = HOST_DEFAULT_DIR,
         query: SearchQuery | None = None,
-    ) -> list[Host]:
+        page: int = 1,
+        page_size: int = HOST_PAGE_SIZE,
+    ) -> tuple[list[Host], bool]:
+        """Returns `(rows, has_more)`. See PlayService.list_recent for
+        the page-size + 1 trick rationale."""
+        page = max(1, page)
+        offset = (page - 1) * page_size
         stmt: Select = (
             select(Host)
             .join(HostGroup, HostGroup.host_id == Host.id)
@@ -162,8 +169,12 @@ class GroupService:
         )
         if query is not None and not query.is_empty():
             stmt = _apply_host_search(stmt, query)
-        stmt = _apply_host_sort(stmt, sort, direction)
-        return list(self.session.scalars(stmt))
+        stmt = _apply_host_sort(stmt, sort, direction).offset(offset).limit(
+            page_size + 1
+        )
+        rows = list(self.session.scalars(stmt))
+        has_more = len(rows) > page_size
+        return rows[:page_size], has_more
 
     def set_description(self, name: str, description: str | None) -> Group:
         """Set or clear a group's free-text description. Raises

@@ -27,8 +27,34 @@ from johnny.services.plays import (
     PLAY_SORT_COLUMNS,
     PlayService,
 )
-from johnny.web._partial import pick
+from johnny.web._partial import is_htmx_request, pick
 from johnny.web._search import read_list_params
+
+
+def _read_page(args) -> int:
+    # Page is an HTMX-driven append mechanism, not a deep-linkable
+    # view; clamp to >= 1 and silently fall back to 1 on garbage.
+    # Non-HX-Request callers never see page > 1 anyway (see
+    # _pick_list_template); we still honour the value at the service
+    # layer so HX-Request load-more works deterministically.
+    try:
+        return max(1, int(args.get("page", "1")))
+    except ValueError:
+        return 1
+
+
+def _pick_list_template(
+    page: int, full: str, table_partial: str, rows_partial: str
+) -> str:
+    # Three render paths per list route:
+    #   1. Non-HX request                       -> full page
+    #   2. HX-Request, page == 1 (search/sort)  -> full table partial
+    #      (search form + first batch + Load-more row if has_more)
+    #   3. HX-Request, page  > 1 (Load-more)    -> rows-only partial
+    #      (next batch of rows + new Load-more row, or nothing)
+    if not is_htmx_request():
+        return full
+    return rows_partial if page > 1 else table_partial
 
 
 def register_routes(app: Flask) -> None:
@@ -65,11 +91,21 @@ def register_routes(app: Flask) -> None:
             HOST_DEFAULT_DIR,
             HOST_SEARCH_SCOPES,
         )
-        hosts = svc.hosts_in(group, sort=sort, direction=direction, query=query)
+        page = _read_page(request.args)
+        hosts, has_more = svc.hosts_in(
+            group, sort=sort, direction=direction, query=query, page=page
+        )
         return render_template(
-            pick("group_detail.html", "_group_hosts_table.html"),
+            _pick_list_template(
+                page,
+                "group_detail.html",
+                "_group_hosts_table.html",
+                "_group_hosts_rows.html",
+            ),
             group=group,
             hosts=hosts,
+            has_more=has_more,
+            page=page,
             query_str=query_str,
             current_sort=sort,
             current_dir=direction,
@@ -93,12 +129,20 @@ def register_routes(app: Flask) -> None:
             PLAY_DEFAULT_DIR,
             PLAY_SEARCH_SCOPES,
         )
-        plays = PlayService(g.session).list_recent(
-            sort=sort, direction=direction, query=query
+        page = _read_page(request.args)
+        plays, has_more = PlayService(g.session).list_recent(
+            sort=sort, direction=direction, query=query, page=page
         )
         return render_template(
-            pick("playbooks_list.html", "_playbooks_table.html"),
+            _pick_list_template(
+                page,
+                "playbooks_list.html",
+                "_playbooks_table.html",
+                "_playbooks_rows.html",
+            ),
             plays=plays,
+            has_more=has_more,
+            page=page,
             query_str=query_str,
             current_sort=sort,
             current_dir=direction,

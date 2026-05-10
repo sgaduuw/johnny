@@ -137,8 +137,35 @@ class TestHostsIn:
         svc.upsert_membership(h2.id, ["webservers"], captured, playbook.id)
         group = svc.get_by_name("webservers")
         assert group is not None
-        fqdns = [h.fqdn for h in svc.hosts_in(group)]
+        hosts, has_more = svc.hosts_in(group)
+        fqdns = [h.fqdn for h in hosts]
         assert fqdns == ["web1.example.com", "web2.example.com"]
+        assert has_more is False
+
+    def test_pagination_signals_has_more_then_terminates(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        # page_size+1 fetch trick: with page_size=2 and 3 members,
+        # page 1 returns 2 rows + has_more=True, page 2 returns 1 + False.
+        svc = GroupService(session)
+        captured = datetime.now(timezone.utc)
+        for fqdn in ("a.example.com", "b.example.com", "c.example.com"):
+            host = _make_host(session, fqdn)
+            svc.upsert_membership(host.id, ["webservers"], captured, playbook.id)
+        group = svc.get_by_name("webservers")
+        assert group is not None
+
+        first, more1 = svc.hosts_in(group, page=1, page_size=2)
+        assert [h.fqdn for h in first] == ["a.example.com", "b.example.com"]
+        assert more1 is True
+
+        second, more2 = svc.hosts_in(group, page=2, page_size=2)
+        assert [h.fqdn for h in second] == ["c.example.com"]
+        assert more2 is False
+
+        third, more3 = svc.hosts_in(group, page=3, page_size=2)
+        assert third == []
+        assert more3 is False
 
 
 class TestSetDescription:

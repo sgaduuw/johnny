@@ -8,7 +8,7 @@ not pixel-level UX regressions.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterator
 from uuid import uuid4
 
@@ -420,6 +420,104 @@ class TestListSearchAndSort:
         r = client.get("/g/all/?q=kernel:6.1")
         body = r.data.decode()
         assert "web1.example.com" in body
+
+
+class TestLoadMorePagination:
+    """Page=1 carries a Load-more <tr> when has_more; HX-Request page>1
+    returns the rows-only fragment ready to swap into the Load-more's
+    place; final page omits the Load-more row."""
+
+    def _seed_n_plays(self, session: Session, n: int) -> None:
+        from johnny.services.plays import PlayService
+        svc = PlayService(session)
+        for i in range(n):
+            svc.start(
+                PlaybookStart(
+                    id=uuid4(),
+                    name=f"play-{i:03d}.yml",
+                    inventory_sources=["inv.yml"],
+                    started_at=datetime(2026, 1, 1, tzinfo=timezone.utc)
+                    + timedelta(seconds=i),
+                    user="ansible",
+                )
+            )
+        session.commit()
+
+    def test_full_render_shows_load_more_when_more_rows_exist(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # Seed PLAY_PAGE_SIZE + 1 to force a Load-more on page 1.
+        from johnny.services.plays import PLAY_PAGE_SIZE
+        self._seed_n_plays(session, PLAY_PAGE_SIZE + 1)
+        r = client.get("/playbooks")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert 'id="plays-load-more"' in body
+        assert "Load more" in body
+
+    def test_full_render_omits_load_more_when_no_more_rows(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        self._seed_n_plays(session, 3)
+        r = client.get("/playbooks")
+        body = r.data.decode()
+        assert 'id="plays-load-more"' not in body
+
+    def test_htmx_page2_returns_rows_only_partial(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        from johnny.services.plays import PLAY_PAGE_SIZE
+        self._seed_n_plays(session, PLAY_PAGE_SIZE + 5)
+        r = client.get(
+            "/playbooks?page=2",
+            headers={"HX-Request": "true"},
+        )
+        assert r.status_code == 200
+        body = r.data.decode()
+        # Rows-only partial: no <table>, no <thead>, no search form.
+        assert "<table>" not in body
+        assert 'id="plays-search"' not in body
+        # Only the trailing 5 plays appear; first PLAY_PAGE_SIZE skipped.
+        # play-{N-1:03d}.yml is the most recent (last seeded), so page 2
+        # under desc-by-started_at gets the older ones.
+        assert "<tr>" in body
+        # Last page → no Load-more row.
+        assert 'id="plays-load-more"' not in body
+
+    def test_htmx_page2_with_more_data_keeps_load_more(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        from johnny.services.plays import PLAY_PAGE_SIZE
+        self._seed_n_plays(session, PLAY_PAGE_SIZE * 2 + 1)
+        r = client.get(
+            "/playbooks?page=2",
+            headers={"HX-Request": "true"},
+        )
+        body = r.data.decode()
+        assert 'id="plays-load-more"' in body  # still more on page 3
+
+    def test_non_htmx_request_with_page_param_renders_full_page(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # Direct GET ?page=2 (no HX header): always full page render.
+        # Page param is an HTMX-driven append mechanism, not a deep
+        # link.
+        from johnny.services.plays import PLAY_PAGE_SIZE
+        self._seed_n_plays(session, PLAY_PAGE_SIZE + 1)
+        r = client.get("/playbooks?page=2")
+        body = r.data.decode()
+        assert body.lower().startswith("<!doctype html>")
+
+    def test_garbage_page_falls_back_to_1(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        self._seed_n_plays(session, 3)
+        r = client.get("/playbooks?page=lolwhat")
+        assert r.status_code == 200
+        # All three plays present (we'd see 0 if it tried offset=garbage).
+        body = r.data.decode()
+        assert "play-000.yml" in body
+        assert "play-002.yml" in body
 
 
 class TestFooterVersion:

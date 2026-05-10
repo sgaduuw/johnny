@@ -32,6 +32,8 @@ PLAY_SEARCH_SCOPES = {"name", "user", "status", "inventory"}
 # Columns bare terms OR across.
 PLAY_BARE_COLUMNS = (Playbook.name, Playbook.user)
 
+PLAY_PAGE_SIZE = 50
+
 
 class PlayService:
     def __init__(self, session: Session) -> None:
@@ -105,19 +107,31 @@ class PlayService:
         sort: str = PLAY_DEFAULT_SORT,
         direction: str = PLAY_DEFAULT_DIR,
         query: SearchQuery | None = None,
-        limit: int = 50,
-    ) -> list[Playbook]:
-        """Filterable, sortable list. Default order: most-recent first.
+        page: int = 1,
+        page_size: int = PLAY_PAGE_SIZE,
+    ) -> tuple[list[Playbook], bool]:
+        """Filterable, sortable, paginated list. Default order:
+        most-recent first.
 
-        Unknown `sort` or `direction` values silently fall back to the
+        Returns `(rows, has_more)`. `has_more` is determined by
+        fetching `page_size + 1` rows; the extra row is dropped before
+        return. Avoids a second COUNT query on every page.
+
+        Unknown `sort` or `direction` silently fall back to the
         defaults — the URL surface is user-typeable, and a bad param
-        shouldn't return 400 from a browse interaction.
+        shouldn't 400 a browse.
         """
+        page = max(1, page)
+        offset = (page - 1) * page_size
         stmt: Select = select(Playbook)
         if query is not None and not query.is_empty():
             stmt = _apply_play_search(stmt, query)
-        stmt = _apply_play_sort(stmt, sort, direction).limit(limit)
-        return list(self.session.scalars(stmt))
+        stmt = _apply_play_sort(stmt, sort, direction).offset(offset).limit(
+            page_size + 1
+        )
+        rows = list(self.session.scalars(stmt))
+        has_more = len(rows) > page_size
+        return rows[:page_size], has_more
 
     def roster(self, playbook_id: UUID) -> list[PlaybookHost]:
         """Per-run host roster, with .host eagerly loaded for template render."""
