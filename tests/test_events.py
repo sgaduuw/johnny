@@ -78,16 +78,34 @@ class TestRecordBatch:
     def test_idempotent_on_event_uuid(
         self, session: Session, playbook: Playbook
     ) -> None:
+        # First-write-wins on event_uuid collision. Re-POSTing with the
+        # same uuid but *different* field values must keep the first
+        # values — anything else is INSERT OR REPLACE smuggled in.
         svc = EventService(session)
         uuid = uuid4()
-        first = _event(event_uuid=uuid)
-        accepted_a, ignored_a = svc.record_batch(playbook.id, [first])
-        accepted_b, ignored_b = svc.record_batch(
-            playbook.id, [_event(event_uuid=uuid)]
+        svc.record_batch(
+            playbook.id,
+            [_event(
+                event_uuid=uuid,
+                task_name="install nginx",
+                status=TaskStatus.OK,
+                stdout="first stdout",
+            )],
         )
-        assert (accepted_a, ignored_a) == (1, 0)
+        accepted_b, ignored_b = svc.record_batch(
+            playbook.id,
+            [_event(
+                event_uuid=uuid,
+                task_name="WRONG TASK",
+                status=TaskStatus.FAILED,
+                stdout="should never persist",
+            )],
+        )
         assert (accepted_b, ignored_b) == (0, 1)
-        assert session.query(Event).count() == 1
+        ev = session.scalars(select(Event)).one()
+        assert ev.task_name == "install nginx"
+        assert ev.status.value == "ok"
+        assert ev.stdout == "first stdout"
 
     def test_partial_overlap_counts_correctly(
         self, session: Session, playbook: Playbook
@@ -193,6 +211,10 @@ class TestForPlay:
     def test_returns_chronological_order(
         self, session: Session, playbook: Playbook
     ) -> None:
+        # Insert out of order; verify the service re-orders to ascending
+        # started_at by comparing against the *known* timestamps. The
+        # earlier sorted-against-itself assertion passed regardless of
+        # whether the SQL ORDER BY ran.
         svc = EventService(session)
         t0 = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
         events = [
@@ -202,7 +224,11 @@ class TestForPlay:
         ]
         svc.record_batch(playbook.id, events)
         out = svc.for_play(playbook.id)
-        assert [e.started_at for e in out] == sorted(e.started_at for e in out)
+        assert [e.started_at for e in out] == [
+            t0,
+            t0 + timedelta(seconds=1),
+            t0 + timedelta(seconds=2),
+        ]
 
     def test_filters_by_playbook_id(
         self, session: Session, playbook: Playbook
