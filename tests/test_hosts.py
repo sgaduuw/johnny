@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -170,6 +171,70 @@ class TestHistory:
         # since matches day 1's exact captured_at
         rows = svc.history("nas.example.com", since=t0 + timedelta(days=1))
         assert len(rows) == 2  # days 1 and 2
+
+
+class TestDiff:
+    def test_diff_shows_added_and_removed_keys(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        svc = HostService(session)
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        svc.upsert_from_record(
+            playbook.id, t0,
+            _record(facts={**_facts(), "ansible_kernel": "6.1.0"}),
+        )
+        svc.upsert_from_record(
+            playbook.id, t0 + timedelta(days=1),
+            _record(facts={**_facts(), "ansible_kernel": "6.6.0"}),
+        )
+        history = svc.history("nas.example.com")
+        # newest first; pick older + newer.
+        newer, older = history[0], history[1]
+        a, b, lines = svc.diff("nas.example.com", older.id, newer.id)
+        assert a.id == older.id
+        assert b.id == newer.id
+        # Unified-diff output: headers + at least one +/-/ block.
+        joined = "\n".join(lines)
+        assert "ansible_kernel" in joined
+        assert any(line.startswith("-") and "6.1.0" in line for line in lines)
+        assert any(line.startswith("+") and "6.6.0" in line for line in lines)
+
+    def test_diff_against_self_is_empty(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        svc = HostService(session)
+        svc.upsert_from_record(
+            playbook.id, datetime(2026, 1, 1, tzinfo=timezone.utc), _record()
+        )
+        row = svc.history("nas.example.com")[0]
+        a, b, lines = svc.diff("nas.example.com", row.id, row.id)
+        assert lines == []
+
+    def test_diff_404s_on_unknown_id(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        svc = HostService(session)
+        svc.upsert_from_record(
+            playbook.id, datetime(2026, 1, 1, tzinfo=timezone.utc), _record()
+        )
+        row = svc.history("nas.example.com")[0]
+        with pytest.raises(LookupError):
+            svc.diff("nas.example.com", row.id, 9999999)
+
+    def test_diff_404s_when_row_belongs_to_other_host(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        # URL-tampering defence: row.id valid, but host_id mismatch.
+        svc = HostService(session)
+        t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        svc.upsert_from_record(playbook.id, t, _record(fqdn="a.example.com"))
+        svc.upsert_from_record(
+            playbook.id, t, _record(fqdn="b.example.com", inv="b"),
+        )
+        a_row = svc.history("a.example.com")[0]
+        b_row = svc.history("b.example.com")[0]
+        with pytest.raises(LookupError):
+            svc.diff("a.example.com", a_row.id, b_row.id)
 
 
 class TestPruneHistory:

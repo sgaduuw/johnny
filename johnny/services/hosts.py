@@ -7,6 +7,8 @@ their framework's session dependency.
 
 from __future__ import annotations
 
+import difflib
+import json
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -106,6 +108,46 @@ class HostService:
             stmt = stmt.where(HostFactsHistory.captured_at >= since)
         stmt = stmt.order_by(HostFactsHistory.captured_at.desc())
         return list(self.session.scalars(stmt))
+
+    def diff(
+        self, fqdn: str, id_a: int, id_b: int
+    ) -> tuple[HostFactsHistory, HostFactsHistory, list[str]]:
+        """Return the two history rows plus a unified diff of their
+        facts payloads.
+
+        Both rows must belong to the named host (defends against URL
+        tampering: `/h/A/diff?a=<row-on-host-B>&b=...` should 404).
+        Diff is computed on `json.dumps(..., indent=2, sort_keys=True)`,
+        so key-reordering between snapshots doesn't surface as noise.
+        Comparing a row against itself yields an empty diff list.
+        """
+        rows = list(
+            self.session.scalars(
+                select(HostFactsHistory).where(
+                    HostFactsHistory.id.in_([id_a, id_b])
+                )
+            )
+        )
+        by_id = {r.id: r for r in rows}
+        a, b = by_id.get(id_a), by_id.get(id_b)
+        if a is None or b is None:
+            raise LookupError(f"unknown history id(s) for {fqdn}")
+        host = self.latest(fqdn)
+        if host is None or a.host_id != host.id or b.host_id != host.id:
+            raise LookupError(f"history rows do not belong to {fqdn}")
+        a_text = json.dumps(a.facts, indent=2, sort_keys=True).splitlines()
+        b_text = json.dumps(b.facts, indent=2, sort_keys=True).splitlines()
+        diff_lines = list(
+            difflib.unified_diff(
+                a_text,
+                b_text,
+                fromfile=f"{fqdn}@{a.captured_at.isoformat()}",
+                tofile=f"{fqdn}@{b.captured_at.isoformat()}",
+                n=3,
+                lineterm="",
+            )
+        )
+        return a, b, diff_lines
 
     def prune_history(self, older_than: datetime) -> int:
         """Delete HostFactsHistory rows strictly older than the cutoff.
