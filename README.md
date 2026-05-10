@@ -34,6 +34,37 @@ controller.
 Read-only UI. All writes happen via the callback plugin POSTing to
 the api tier.
 
+### Search and sort
+
+Every list page (groups index, hosts in a group, playbooks) carries
+a search box and sortable column headers. Updates swap in place via
+HTMX; the URL pushes on every change so deep links and the back
+button preserve state.
+
+The search box accepts a small `key:value` grammar:
+
+```
+nginx                          bare term, OR'd across the
+                               default columns for that list
+user:eelco                     scoped match
+status:failed,unreachable      comma-OR within a scope
+name:"deploy nginx"            quote whitespace
+ip:[fe80::1]                   brackets for `:`-bearing values
+                               (IPv6 literals)
+user:eelco status:failed nginx all of the above, AND'd together
+```
+
+Hover the input for the per-list scope vocabulary. Scopes per list:
+
+| Page             | Scopes                                      |
+|------------------|---------------------------------------------|
+| `/`              | `name`, `description`                       |
+| `/playbooks`     | `name`, `user`, `status`, `inventory`       |
+| `/g/<group>/`    | `fqdn`, `os`, `kernel`, `virt`, `ip`        |
+
+Unknown scopes degrade to bare terms — `weh:foo` matches as the
+literal string rather than silently disappearing.
+
 ## Status
 
 v0.1.0 (2026-05-08). First tagged release; pairs with
@@ -153,7 +184,7 @@ ingest.
 
 ```sh
 poetry install
-poetry run pytest                                       # 115 tests, ~1s
+poetry run pytest                                       # 143 tests, ~1s
 poetry run ruff check johnny/ tests/
 poetry run alembic upgrade head                         # apply schema
 poetry run uvicorn 'johnny.api:create_app' --factory \
