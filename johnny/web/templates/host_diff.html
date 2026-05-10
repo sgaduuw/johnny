@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}diff | {{ host.fqdn }} | johnny{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="{{ url_for('index') }}">groups</a></li>
+    <li><a href="{{ url_for('host_detail', fqdn=host.fqdn) }}">{{ host.fqdn }}</a></li>
+    <li>diff</li>
+  </ul>
+</nav>
+
+<hgroup>
+  <h2>Fact diff: {{ host.fqdn }}</h2>
+  <p>
+    <span title="{{ a.captured_at }}">{{ a.captured_at | naturaltime }}</span>
+    →
+    <span title="{{ b.captured_at }}">{{ b.captured_at | naturaltime }}</span>
+  </p>
+</hgroup>
+
+{% if diff_lines %}
+<pre class="fact-diff"><code>{%- for line in diff_lines -%}
+{%- set ch = line[0] if line else ' ' -%}
+{%- if line.startswith('+++') or line.startswith('---') -%}
+<span class="diff-meta">{{ line }}</span>
+{%- elif line.startswith('@@') -%}
+<span class="diff-hunk">{{ line }}</span>
+{%- elif ch == '+' -%}
+<span class="diff-add">{{ line }}</span>
+{%- elif ch == '-' -%}
+<span class="diff-rm">{{ line }}</span>
+{%- else -%}
+<span class="diff-ctx">{{ line }}</span>
+{%- endif %}
+{% endfor -%}</code></pre>
+{% else %}
+<p><em>No changes between the two snapshots.</em></p>
+{% endif %}
+{% endblock %}

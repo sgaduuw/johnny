@@ -57,19 +57,47 @@
 
   <h3>Fact history <small>({{ history|length }})</small></h3>
   {% if history %}
-  <figure>
-    <table>
-      <thead><tr><th scope="col">Captured</th><th scope="col">Playbook</th></tr></thead>
-      <tbody>
-      {% for h in history %}
-        <tr>
-          <td><small title="{{ h.captured_at }}">{{ h.captured_at | naturaltime }}</small></td>
-          <td><a href="{{ url_for('playbook_detail', playbook_id=h.playbook_id) }}"><code>{{ h.playbook_id }}</code></a></td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </figure>
+    {%- set latest_id = history[0].id -%}
+    {% if history|length > 1 %}
+    <form action="{{ url_for('host_diff', fqdn=host.fqdn) }}"
+          method="get" class="diff-pair-form">
+      <small>Compare any two snapshots:</small>
+      <select name="a" required>
+        {% for h in history %}
+          <option value="{{ h.id }}">{{ h.captured_at | naturaltime }}</option>
+        {% endfor %}
+      </select>
+      <span aria-hidden="true">→</span>
+      <select name="b" required>
+        {% for h in history %}
+          <option value="{{ h.id }}"{% if loop.first %} selected{% endif %}>{{ h.captured_at | naturaltime }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="outline secondary">Diff</button>
+    </form>
+    {% endif %}
+    <figure>
+      <table>
+        <thead><tr><th scope="col">Captured</th><th scope="col">Playbook</th><th scope="col"></th></tr></thead>
+        <tbody>
+        {% for h in history %}
+          <tr>
+            <td><small title="{{ h.captured_at }}">{{ h.captured_at | naturaltime }}</small></td>
+            <td><a href="{{ url_for('playbook_detail', playbook_id=h.playbook_id) }}"><code>{{ h.playbook_id }}</code></a></td>
+            <td>
+              {% if h.id != latest_id %}
+                <small>
+                  <a href="{{ url_for('host_diff', fqdn=host.fqdn, a=h.id, b=latest_id) }}">
+                    compare to current
+                  </a>
+                </small>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </figure>
   {% else %}
   <p><em>No fact snapshots recorded.</em></p>
   {% endif %}

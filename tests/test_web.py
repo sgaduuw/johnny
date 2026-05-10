@@ -465,6 +465,150 @@ class TestListSearchAndSort:
         assert "web1.example.com" in body
 
 
+class TestFactDiff:
+    """`/h/<fqdn>/diff?a=A&b=B` renders a unified diff between two
+    fact-history snapshots; entry points live on the host_detail
+    page (per-row link + form for arbitrary pair compare)."""
+
+    def _seed_two_snapshots(self, session: Session) -> tuple[int, int, str]:
+        """Two snapshots of the same host with one differing key."""
+        from johnny.services.hosts import HostService
+        from johnny.contracts.v1 import FactRecord
+        svc = HostService(session)
+        pb_id = uuid4()
+        from johnny.persistence import Playbook
+        session.add(Playbook(
+            id=pb_id, name="diff.yml",
+            inventory_sources=["inv.yml"],
+            started_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            user="u",
+        ))
+        session.flush()
+        base = {
+            "ansible_default_ipv4": {"address": "10.0.0.1"},
+            "ansible_kernel": "6.1.0",
+        }
+        svc.upsert_from_record(
+            pb_id,
+            datetime(2026, 5, 1, tzinfo=timezone.utc),
+            FactRecord(
+                fqdn="diffhost.example.com",
+                inventory_hostname="diffhost",
+                groups=[],
+                ansible_facts=base,
+            ),
+        )
+        svc.upsert_from_record(
+            pb_id,
+            datetime(2026, 5, 2, tzinfo=timezone.utc),
+            FactRecord(
+                fqdn="diffhost.example.com",
+                inventory_hostname="diffhost",
+                groups=[],
+                ansible_facts={**base, "ansible_kernel": "6.6.0"},
+            ),
+        )
+        session.commit()
+        history = svc.history("diffhost.example.com")
+        return history[1].id, history[0].id, "diffhost.example.com"
+
+    def test_renders_diff_with_added_and_removed(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        a_id, b_id, fqdn = self._seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/diff?a={a_id}&b={b_id}")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "Fact diff" in body
+        # The kernel value before and after should both appear.
+        assert "6.1.0" in body
+        assert "6.6.0" in body
+        # The CSS classes for added/removed should be applied.
+        assert "diff-add" in body
+        assert "diff-rm" in body
+
+    def test_self_diff_renders_no_changes_message(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        a_id, _b_id, fqdn = self._seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/diff?a={a_id}&b={a_id}")
+        assert r.status_code == 200
+        assert b"No changes between the two snapshots" in r.data
+
+    def test_404_on_unknown_history_id(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        a_id, _b_id, fqdn = self._seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/diff?a={a_id}&b=9999999")
+        assert r.status_code == 404
+
+    def test_400_on_garbage_query_params(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _a, _b, fqdn = self._seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/diff?a=lol&b=wat")
+        assert r.status_code == 400
+
+    def test_404_on_unknown_host(self, client: FlaskClient) -> None:
+        r = client.get("/h/never.seen.com/diff?a=1&b=2")
+        assert r.status_code == 404
+
+    def test_404_when_row_belongs_to_other_host(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # URL tampering: ?a points at a row on a different host.
+        from johnny.services.hosts import HostService
+        from johnny.contracts.v1 import FactRecord
+        from johnny.persistence import Playbook
+        a_id, b_id, fqdn_a = self._seed_two_snapshots(session)
+        # Seed a row on a *second* host.
+        svc = HostService(session)
+        pb_id = uuid4()
+        session.add(Playbook(
+            id=pb_id, name="other.yml",
+            inventory_sources=["inv.yml"],
+            started_at=datetime(2026, 5, 3, tzinfo=timezone.utc),
+            user="u",
+        ))
+        session.flush()
+        svc.upsert_from_record(
+            pb_id,
+            datetime(2026, 5, 3, tzinfo=timezone.utc),
+            FactRecord(
+                fqdn="other.example.com",
+                inventory_hostname="other",
+                groups=[],
+                ansible_facts={"ansible_kernel": "6.1.0"},
+            ),
+        )
+        session.commit()
+        other_row_id = svc.history("other.example.com")[0].id
+        r = client.get(f"/h/{fqdn_a}/diff?a={a_id}&b={other_row_id}")
+        assert r.status_code == 404
+
+    def test_host_detail_carries_compare_to_current_link(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # With two snapshots, the older row gets the "compare to current"
+        # link; the latest row does not (it's already current).
+        a_id, b_id, fqdn = self._seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/")
+        body = r.data.decode()
+        assert "compare to current" in body
+        assert f"a={a_id}&amp;b={b_id}" in body or f"a={a_id}&b={b_id}" in body
+
+    def test_host_detail_carries_arbitrary_pair_form(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        a_id, b_id, fqdn = self._seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/")
+        body = r.data.decode()
+        assert 'class="diff-pair-form"' in body
+        # Both <select>s should list both history ids as <option>s.
+        assert f'value="{a_id}"' in body
+        assert f'value="{b_id}"' in body
+
+
 class TestLoadMorePagination:
     """Page=1 carries a Load-more <tr> when has_more; HX-Request page>1
     returns the rows-only fragment ready to swap into the Load-more's

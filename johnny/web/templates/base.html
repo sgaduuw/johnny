@@ -67,6 +67,21 @@
     /* Load-more row: a tbody-resident <tr> swapped via outerHTML. */
     td.load-more-cell { text-align: center; padding: 1rem 0; }
     .load-more-btn { margin: 0; max-width: 12rem; }
+    /* Unified diff for fact snapshots. Colours via light-dark() so
+       both modes stay legible without two rule sets. */
+    pre.fact-diff { line-height: 1.35; }
+    .fact-diff .diff-add  { color: light-dark(seagreen, lightgreen); }
+    .fact-diff .diff-rm   { color: light-dark(crimson, lightcoral); }
+    .fact-diff .diff-meta { color: light-dark(dimgray, lightgray); font-weight: 600; }
+    .fact-diff .diff-hunk { color: light-dark(steelblue, lightskyblue); }
+    .fact-diff .diff-ctx  { opacity: 0.7; }
+    /* Compact diff-pair form above the fact-history table. */
+    form.diff-pair-form {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    form.diff-pair-form select { width: auto; max-width: 14rem; margin: 0; }
+    form.diff-pair-form button { margin: 0; }
   </style>
 </head>
 <body style="--truncate-width: {{ settings.johnny_truncate_chars }}ch">

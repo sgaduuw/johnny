@@ -184,7 +184,7 @@ ingest.
 
 ```sh
 poetry install
-poetry run pytest                                       # 158 tests, ~1s
+poetry run pytest                                       # 170 tests, ~1s
 poetry run ruff check johnny/ tests/
 poetry run alembic upgrade head                         # apply schema
 poetry run uvicorn 'johnny.api:create_app' --factory \

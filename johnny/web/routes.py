@@ -124,6 +124,32 @@ def register_routes(app: Flask) -> None:
             history=history,
         )
 
+    @app.route("/h/<fqdn>/diff")
+    def host_diff(fqdn: str) -> str:
+        # Query params (?a=<id>&b=<id>) instead of path components so a
+        # form with two <select>s can submit to a static action without
+        # client-side URL assembly.
+        try:
+            id_a = int(request.args.get("a", ""))
+            id_b = int(request.args.get("b", ""))
+        except ValueError:
+            abort(400)
+        svc = HostService(g.session)
+        host = svc.latest(fqdn)
+        if host is None:
+            abort(404)
+        try:
+            a, b, diff_lines = svc.diff(fqdn, id_a, id_b)
+        except LookupError:
+            abort(404)
+        return render_template(
+            "host_diff.html",
+            host=host,
+            a=a,
+            b=b,
+            diff_lines=diff_lines,
+        )
+
     @app.route("/playbooks")
     def playbooks_list() -> str:
         sort, direction, query_str, query = read_list_params(
