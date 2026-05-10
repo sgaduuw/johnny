@@ -244,3 +244,13 @@ class TestPlaybookDetail:
         assert "web1.example.com" in body  # roster
         assert "install nginx" in body  # event task name
         assert "200ms" in body  # event duration
+
+
+class TestFooterVersion:
+    def test_footer_shows_johnny_version(self, client: FlaskClient) -> None:
+        from johnny import __version__
+
+        r = client.get("/")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert f"johnny {__version__}" in body
