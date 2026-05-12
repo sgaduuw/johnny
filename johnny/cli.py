@@ -165,5 +165,5 @@ def group_describe(name: str, description: str) -> None:
     click.echo(f"described: {name}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     cli()

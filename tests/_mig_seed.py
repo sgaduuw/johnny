@@ -1,13 +1,13 @@
 """Seed a tiny but representative dataset against a DB at the
 *previous* migration revision.
 
-Used by the CI "migration smoke" step (issue #6): the runner upgrades
-to PREV, runs this script, then runs `alembic upgrade head` and
-re-runs `_mig_smoke_assert` against the upgraded DB. That order
-catches migrations that fail on populated rows — a class of bug
-that `alembic check` and the existing CI's `upgrade head` against
-an empty DB cannot see (and that we shipped three times in v0.2.x
-before adding this step).
+Used by the CI "migration smoke" step (`.github/workflows/ci.yml`):
+the runner upgrades to PREV, runs this script, then runs
+`alembic upgrade head` and re-runs `_mig_smoke_assert` against the
+upgraded DB. That order catches migrations that fail on populated
+rows — a class of bug that `alembic check` and the existing CI's
+`upgrade head` against an empty DB cannot see (and that we shipped
+three times in v0.2.x before adding this step).
 
 Insert counts are deterministic so `_mig_smoke_assert` can compare
 against fixed expectations. Inserts are raw SQL (not the ORM models)

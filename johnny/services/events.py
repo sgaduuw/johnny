@@ -83,7 +83,9 @@ def _insert_ignore_event(session: Session) -> Any:
     dialect = session.get_bind().dialect.name
     if dialect == "sqlite":
         from sqlalchemy.dialects.sqlite import insert
-    elif dialect == "postgresql":
+    elif dialect == "postgresql":  # pragma: no cover
+        # PG-only import; reached only when DATABASE_URL points at
+        # a Postgres engine. Unit-suite runs SQLite throughout.
         from sqlalchemy.dialects.postgresql import insert
     else:
         raise NotImplementedError(

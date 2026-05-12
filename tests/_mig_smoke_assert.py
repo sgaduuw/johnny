@@ -1,7 +1,7 @@
 """Verify a DB seeded by `_mig_seed.py` survives `alembic upgrade head`.
 
-Pairs with `_mig_seed.py` for the CI migration smoke step (issue #6).
-After the upgrade runs, this script:
+Pairs with `_mig_seed.py` for the CI migration smoke step
+(`.github/workflows/ci.yml`). After the upgrade runs, this script:
 
   1. Runs `PRAGMA foreign_key_check` and aborts on any orphan rows.
   2. Compares row counts in the originally-seeded tables against the
