@@ -36,7 +36,7 @@ jobs:
         run: poetry run ruff check johnny/ tests/
 
       - name: Test with coverage
-        run: poetry run pytest --cov=johnny --cov-report=term --cov-fail-under=85
+        run: poetry run pytest --cov=johnny --cov-report=term --cov-fail-under=97
 
       - name: Migrations apply cleanly + match models
         env:

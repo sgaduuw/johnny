@@ -129,6 +129,26 @@ class TestLatest:
         assert h.fqdn == "nas.example.com"
 
 
+class TestListAll:
+    def test_empty(self, session: Session) -> None:
+        assert HostService(session).list_all() == []
+
+    def test_orders_by_fqdn_ascending(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        svc = HostService(session)
+        captured = datetime.now(timezone.utc)
+        for fqdn in ("c.example.com", "a.example.com", "b.example.com"):
+            svc.upsert_from_record(
+                playbook.id, captured, _record(fqdn=fqdn, inv=fqdn.split(".")[0])
+            )
+        assert [h.fqdn for h in svc.list_all()] == [
+            "a.example.com",
+            "b.example.com",
+            "c.example.com",
+        ]
+
+
 class TestHistory:
     def test_empty_for_unknown(self, session: Session) -> None:
         assert HostService(session).history("never.seen.com") == []
@@ -355,6 +375,19 @@ def _add_playbook_host(
     session.add(ph)
     session.flush()
     return ph
+
+
+class TestCountFkEmptyShortCircuit:
+    """`HostService._count_fk` returns 0 immediately for an empty
+    orphan list. Not reached from `find_merge_candidates` (which
+    only computes counts for groups with >=1 orphan) but callers
+    can pass empty; lock the behaviour."""
+
+    def test_returns_zero_without_running_a_query(
+        self, session: Session
+    ) -> None:
+        svc = HostService(session)
+        assert svc._count_fk(HostFactsHistory.host_id, []) == 0
 
 
 class TestFindMergeCandidates:

@@ -235,6 +235,43 @@ class TestRebuildFromHistory:
         assert legacy.first_seen_at == t0
         assert legacy.last_seen_at == t0
 
+    def test_rebuild_advances_last_seen_when_play_is_newer(
+        self, session: Session
+    ) -> None:
+        """A pre-existing Group row gets its `last_seen_at` advanced
+        if the rebuild walks a playbook started after the group's
+        current last_seen. Exercises the else-branch's `last >
+        group.last_seen_at` update path."""
+        host = _make_host(session, "web1.example.com")
+        svc = GroupService(session)
+        t0 = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        # First observation: group created at t0.
+        pb_old = _make_play(session, t0, name="old")
+        svc.upsert_membership(host.id, ["webservers"], t0, pb_old.id)
+        # Second observation, t1, via the audit log only (no upsert
+        # this time — that's the path the rebuild walks).
+        t1 = t0 + timedelta(days=7)
+        pb_new = _make_play(session, t1, name="new")
+        session.add(
+            PlaybookHost(
+                playbook_id=pb_new.id,
+                host_id=host.id,
+                inventory_hostname="web1",
+                groups=["webservers"],
+            )
+        )
+        session.flush()
+
+        result = svc.rebuild_from_history()
+        # Note: rebuild walks `playbook_hosts` rows, not the
+        # upsert_membership history; only one PH row is in scope
+        # (the t1 one), so group_seen reports (t1, t1).
+        assert result["memberships"] == 1
+        group = svc.get_by_name("webservers")
+        assert group is not None
+        # The else-branch noticed t1 > existing last_seen and bumped it.
+        assert group.last_seen_at == t1
+
     def test_rebuild_preserves_descriptions(
         self, session: Session, playbook: Playbook
     ) -> None:

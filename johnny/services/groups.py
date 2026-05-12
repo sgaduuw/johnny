@@ -242,7 +242,11 @@ class GroupService:
         for host_id, (pb_id, started_at, names) in latest_per_host.items():
             for name in names:
                 group = self.get_by_name(name)
-                if group is None:
+                if group is None:  # pragma: no cover
+                    # Unreachable: `names` is sourced from the same
+                    # walk that populated `group_seen`, and every
+                    # name in `group_seen` was upserted above. The
+                    # guard is defensive against a future refactor.
                     continue
                 self.session.add(
                     HostGroup(

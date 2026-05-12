@@ -218,3 +218,155 @@ class TestDedupeHosts:
         result = CliRunner().invoke(cli, ["dedupe-hosts"])
         assert result.exit_code == 0
         assert "nothing to merge" in result.output
+
+    def test_skips_group_on_sqlalchemy_error(
+        self,
+        engine: Engine,
+        session: Session,
+        playbook: Playbook,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Per CLAUDE.md: "Each merge runs in its own transaction; one
+        # bad group skips and prints a warning rather than rolling
+        # back the whole run." Monkeypatch HostService.merge_into to
+        # raise IntegrityError; assert the CLI prints SKIPPED, exits 0,
+        # and tells the operator zero groups merged.
+        from sqlalchemy.exc import IntegrityError
+
+        from johnny.config import get_settings
+        from johnny.services.hosts import HostService
+
+        _seed_split_pair_for_cli(session, playbook)
+
+        def _boom(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            raise IntegrityError("forced", params=None, orig=Exception("test"))
+
+        monkeypatch.setattr(HostService, "merge_into", _boom)
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+        result = CliRunner().invoke(cli, ["dedupe-hosts"])
+        assert result.exit_code == 0, result.output
+        assert "SKIPPED: IntegrityError" in result.output
+        assert "merged: 0 groups" in result.output
+        assert "skipped: 1 groups" in result.output
+
+
+class TestGroupsRebuild:
+    def test_rebuild_walks_audit_log_and_reports_counts(
+        self,
+        engine: Engine,
+        session: Session,
+        playbook: Playbook,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Seed a host + playbook_hosts row so the rebuild has audit
+        # data to walk. Idempotency is asserted at the service level
+        # in test_groups.py; this case is the CLI smoke.
+        from johnny.config import get_settings
+        from johnny.persistence import Host, PlaybookHost
+
+        host = Host(fqdn="web1.example.com")
+        session.add(host)
+        session.flush()
+        session.add(
+            PlaybookHost(
+                playbook_id=playbook.id,
+                host_id=host.id,
+                inventory_hostname="web1",
+                groups=["all", "webservers"],
+            )
+        )
+        session.commit()
+
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+        result = CliRunner().invoke(cli, ["groups-rebuild"])
+        assert result.exit_code == 0, result.output
+        assert "rebuilt: 2 groups" in result.output
+        assert "2 host-group memberships" in result.output
+
+
+class TestGroupDescribe:
+    def test_describe_sets_value(
+        self,
+        engine: Engine,
+        session: Session,
+        playbook: Playbook,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from johnny.config import get_settings
+        from johnny.services.groups import GroupService
+
+        host = Host(fqdn="web1.example.com")
+        session.add(host)
+        session.flush()
+        GroupService(session).upsert_membership(
+            host.id, ["webservers"],
+            datetime.now(timezone.utc), playbook.id,
+        )
+        session.commit()
+
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+        result = CliRunner().invoke(
+            cli, ["group", "describe", "webservers", "front-end HTTP"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "described: webservers" in result.output
+
+        session.expire_all()
+        group = GroupService(session).get_by_name("webservers")
+        assert group is not None
+        assert group.description == "front-end HTTP"
+
+    def test_describe_empty_clears(
+        self,
+        engine: Engine,
+        session: Session,
+        playbook: Playbook,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Empty string clears the description (per CLAUDE.md).
+        from johnny.config import get_settings
+        from johnny.services.groups import GroupService
+
+        host = Host(fqdn="web1.example.com")
+        session.add(host)
+        session.flush()
+        svc = GroupService(session)
+        svc.upsert_membership(
+            host.id, ["webservers"],
+            datetime.now(timezone.utc), playbook.id,
+        )
+        svc.set_description("webservers", "to be cleared")
+        session.commit()
+
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+        result = CliRunner().invoke(
+            cli, ["group", "describe", "webservers", ""]
+        )
+        assert result.exit_code == 0, result.output
+
+        session.expire_all()
+        group = svc.get_by_name("webservers")
+        assert group is not None
+        assert group.description is None
+
+    def test_describe_unknown_group_raises_click_exception(
+        self,
+        engine: Engine,
+        session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from johnny.config import get_settings
+
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+        result = CliRunner().invoke(
+            cli, ["group", "describe", "no-such-group", "x"]
+        )
+        # ClickException renders as a non-zero exit with the
+        # underlying LookupError message on stderr.
+        assert result.exit_code != 0
+        assert "unknown group" in result.output

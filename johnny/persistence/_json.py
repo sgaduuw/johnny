@@ -34,7 +34,12 @@ def _json_path_sqlite(element: json_path, compiler: Any, **kw: Any) -> str:
 
 
 @compiles(json_path, "postgresql")
-def _json_path_pg(element: json_path, compiler: Any, **kw: Any) -> str:
+def _json_path_pg(element: json_path, compiler: Any, **kw: Any) -> str:  # pragma: no cover
+    # Postgres-only DDL emission. Exercised at table-create time
+    # against a real PG engine; unreachable from the SQLite test
+    # suite, hence the pragma. Wire-equivalence with the SQLite
+    # form is the responsibility of the (future) PG-deployment
+    # smoke once that environment exists.
     parts = element.path.split(".")
     expr = element.column
     for p in parts[:-1]:

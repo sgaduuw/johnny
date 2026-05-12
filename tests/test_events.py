@@ -5,12 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from johnny.contracts.v1 import TaskEvent, TaskStatus
 from johnny.persistence import Event, Host, Playbook
-from johnny.services.events import EventService
+from johnny.services.events import EventService, _insert_ignore_event
 
 
 def _event(
@@ -279,3 +280,21 @@ class TestPrune:
             older_than=datetime.now(timezone.utc)
         )
         assert deleted == 0
+
+
+class TestInsertIgnoreDialect:
+    """`_insert_ignore_event` chooses SQLite or Postgres SQL based on
+    the bound dialect; anything else is genuinely unsupported and must
+    fail loud rather than fall back to a behaviour-different INSERT.
+
+    Currently exercised at the boundary only; if a third dialect is
+    added (e.g. mysql), the bare `raise NotImplementedError` must keep
+    that path closed until SQL is written for it."""
+
+    def test_unknown_dialect_raises_not_implemented(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bind = session.get_bind()
+        monkeypatch.setattr(bind.dialect, "name", "mysql")
+        with pytest.raises(NotImplementedError, match="mysql"):
+            _insert_ignore_event(session)
