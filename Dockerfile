@@ -8,12 +8,21 @@ FROM python:${PYTHON_VERSION}-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    POETRY_VIRTUALENVS_CREATE=false \
-    POETRY_NO_INTERACTION=1
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_NO_INTERACTION=1 \
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir "poetry==1.8.5"
+# Install Poetry into the system Python, app deps into a
+# project-local `.venv` (POETRY_VIRTUALENVS_IN_PROJECT=true).
+# Earlier this image set VIRTUALENVS_CREATE=false so both Poetry
+# and the app deps shared one Python; under Poetry 2.x + PEP 621,
+# `poetry install` would resolve `packaging==24.0` against the
+# lockfile and downgrade Poetry's own dep, crashing the second
+# `poetry install` call with "No module named 'packaging.licenses'".
+# Project-local venv keeps Poetry's deps isolated from the app's.
+RUN pip install --no-cache-dir "poetry>=2.0,<3.0"
 
 COPY pyproject.toml poetry.lock ./
 RUN --mount=type=cache,target=/root/.cache/pypoetry \
