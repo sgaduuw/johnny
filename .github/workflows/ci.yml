@@ -19,7 +19,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install poetry
-        run: pip install "poetry==1.8.5"
+        run: pip install "poetry>=2.0,<3.0"
 
       - name: Cache poetry virtualenv
         uses: actions/cache@v5
