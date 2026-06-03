@@ -22,7 +22,7 @@ dependencies = [
 johnny = "johnny.cli:cli"
 
 [tool.poetry.group.dev.dependencies]
-ruff = "^0.15.14"
+ruff = "^0.15.15"
 pytest = "^9.0.3"
 pytest-cov = "^7.1.0"
 httpx = "^0.28.1"
