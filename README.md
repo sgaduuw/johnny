@@ -67,8 +67,8 @@ literal string rather than silently disappearing.
 
 ## Status
 
-v0.1.0 (2026-05-08). First tagged release; pairs with
-[johnny-callback v0.1.0][cb-rel].
+v0.4.1 (2026-06-07). Pairs with
+[johnny-callback v0.2.1][cb-rel].
 
 [cb-rel]: https://galaxy.ansible.com/ui/repo/published/sgaduuw/johnny/
 
@@ -95,7 +95,7 @@ Three containers come up:
 Then on your Ansible controller, install the callback plugin:
 
 ```sh
-ansible-galaxy collection install sgaduuw.johnny:0.1.0
+ansible-galaxy collection install sgaduuw.johnny:0.2.1
 ```
 
 …and configure it with the same token (`JOHNNY_API_TOKEN`) and
