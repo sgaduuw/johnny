@@ -183,18 +183,18 @@ ingest.
 ## Development
 
 ```sh
-poetry install
-poetry run pytest                                       # 170 tests, ~1s
-poetry run ruff check johnny/ tests/
-poetry run alembic upgrade head                         # apply schema
-poetry run uvicorn 'johnny.api:create_app' --factory \
-    --host 0.0.0.0 --port 8001                          # api tier
-poetry run gunicorn -w 2 -b 0.0.0.0:8000 \
-    'johnny.web:create_app()'                           # web tier
-poetry run johnny prune --older-than-days 30            # CLI sweep
-poetry run johnny groups-rebuild                        # backfill groups
-poetry run johnny group describe webservers "..."       # set description
-poetry run python scripts/seed_mock.py                  # demo fleet data
+uv sync
+uv run pytest                                       # 269 tests, ~1s
+uv run ruff check johnny/ tests/
+uv run alembic upgrade head                         # apply schema
+uv run uvicorn 'johnny.api:create_app' --factory \
+    --host 0.0.0.0 --port 8001                      # api tier
+uv run gunicorn -w 2 -b 0.0.0.0:8000 \
+    'johnny.web:create_app()'                       # web tier
+uv run johnny prune --older-than-days 30            # CLI sweep
+uv run johnny groups-rebuild                        # backfill groups
+uv run johnny group describe webservers "..."       # set description
+uv run python scripts/seed_mock.py                  # demo fleet data
 ```
 
 The Dockerfile has separate `test` and `prod` stages; CI builds

@@ -1,8 +1,8 @@
 """johnny administrative CLI.
 
 Standalone Click app, not Flask-CLI bound. Run via `johnny <subcommand>`
-(installed as a poetry script entry-point) or
-`poetry run johnny <subcommand>` during dev. Used by the johnny-tasks
+(installed as a console-script entry-point via `[project.scripts]`) or
+`uv run johnny <subcommand>` during dev. Used by the johnny-tasks
 sidecar for retention pruning.
 """
 
