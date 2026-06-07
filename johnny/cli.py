@@ -1,7 +1,7 @@
 """johnny administrative CLI.
 
 Standalone Click app, not Flask-CLI bound. Run via `johnny <subcommand>`
-(installed as a uv script entry-point) or
+(installed as a console-script entry-point via `[project.scripts]`) or
 `uv run johnny <subcommand>` during dev. Used by the johnny-tasks
 sidecar for retention pruning.
 """
