@@ -48,7 +48,8 @@ def create_app(engine_factory: EngineFactory | None = None) -> Flask:
 
     @app.context_processor
     def _inject_settings() -> dict[str, object]:
-        return {"settings": get_settings()}
+        from johnny import __version__ as johnny_version
+        return {"settings": get_settings(), "johnny_version": johnny_version}
 
     from johnny.web.routes import register_routes
 

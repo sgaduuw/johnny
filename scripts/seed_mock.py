@@ -5,7 +5,7 @@ log has more than one observation per host. ~9 hosts spread across
 overlapping groups to make the cards interesting; six groups get a
 description so the description path is visible too.
 
-Run via: `poetry run python scripts/seed_mock.py`
+Run via: `uv run python scripts/seed_mock.py`
 
 Re-running stacks new playbook rows on top of the existing audit log
 (fresh UUIDs each call). Hosts upsert by fqdn, so they don't duplicate,

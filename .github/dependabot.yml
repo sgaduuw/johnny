@@ -9,7 +9,7 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Reads pyproject.toml + poetry.lock; works for poetry projects.
+  # Reads pyproject.toml + uv.lock.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:

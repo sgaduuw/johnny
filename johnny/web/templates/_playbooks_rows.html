@@ -1,0 +1,54 @@
+{#- Rows-only partial: tbody contents for the playbooks list.
+
+    Used in two contexts:
+      * Embedded in `_playbooks_table.html` for the first-page render
+        (server-side full include).
+      * Returned standalone when an HX-Request comes in with page > 1,
+        so the Load-more button's outerHTML swap drops these rows in
+        place of the current Load-more row.
+
+    The footer Load-more <tr> sits inside <tbody> because HTMX's
+    outerHTML swap replaces the source element with the response;
+    keeping source + response as <tr> siblings is what makes the
+    "next batch arrives where Load-more was" pattern work cleanly.
+-#}
+{% for p in plays %}
+  <tr>
+    <td><small title="{{ p.started_at }}">{{ p.started_at | naturaltime }}</small></td>
+    <td><a href="{{ url_for('playbook_detail', playbook_id=p.id) }}">{{ p.name }}</a></td>
+    <td><code>{{ p.user }}</code></td>
+    <td><span class="play-status-{{ p.status.value }}">{{ p.status.value }}</span></td>
+    <td>
+      {%- if p.finished_at -%}
+        {{ ((p.finished_at - p.started_at).total_seconds() | int) }}s
+      {%- else -%}—{%- endif -%}
+    </td>
+    <td>
+      {%- set t = p.stats | play_stats -%}
+      {%- if t -%}
+        <small>
+          {{ t.hosts }} host{% if t.hosts != 1 %}s{% endif %} ·
+          {{ t.ok }} ok
+          {%- if t.changed %}, {{ t.changed }} changed{% endif -%}
+          {%- if t.failed %}, <span class="play-status-failed">{{ t.failed }} failed</span>{% endif -%}
+          {%- if t.unreachable %}, <span class="play-status-failed">{{ t.unreachable }} unreachable</span>{% endif -%}
+        </small>
+      {%- else -%}—{%- endif -%}
+    </td>
+    <td><small>{{ p.inventory_sources | join(', ') }}</small></td>
+  </tr>
+{% endfor %}
+{% if has_more %}
+  <tr id="plays-load-more">
+    <td colspan="7" class="load-more-cell">
+      <button class="outline secondary load-more-btn"
+              hx-get="{{ url_for('playbooks_list', page=page + 1) }}"
+              hx-include="#plays-search"
+              hx-target="#plays-load-more"
+              hx-swap="outerHTML"
+              hx-push-url="false">
+        Load more
+      </button>
+    </td>
+  </tr>
+{% endif %}

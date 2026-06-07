@@ -11,8 +11,7 @@
 <hgroup>
   <h2>{{ group.name }}</h2>
   <p>
-    {{ hosts|length }} host{{ '' if hosts|length == 1 else 's' }}
-    · first seen <span title="{{ group.first_seen_at }}">{{ group.first_seen_at | naturaltime }}</span>
+    first seen <span title="{{ group.first_seen_at }}">{{ group.first_seen_at | naturaltime }}</span>
     · last seen <span title="{{ group.last_seen_at }}">{{ group.last_seen_at | naturaltime }}</span>
   </p>
 </hgroup>
@@ -21,48 +20,5 @@
 <blockquote>{{ group.description }}</blockquote>
 {% endif %}
 
-{% if hosts %}
-<figure>
-  <table>
-    <thead>
-      <tr>
-        <th scope="col">FQDN</th>
-        <th scope="col">IPv4</th>
-        <th scope="col">OS</th>
-        <th scope="col">Kernel</th>
-        <th scope="col">Virt</th>
-        <th scope="col">Memory</th>
-        <th scope="col">vCPUs</th>
-        <th scope="col">Uptime</th>
-        <th scope="col">Last seen</th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for h in hosts %}
-      <tr>
-        <td><a href="{{ url_for('host_detail', fqdn=h.fqdn) }}">{{ h.fqdn }}</a></td>
-        <td>{{ h.default_ipv4 or '—' }}</td>
-        <td>
-          {%- if h.distribution -%}
-            {{ h.distribution }}{% if h.distribution_version and h.distribution_version != 'NA' %} {{ h.distribution_version }}{% endif %}
-          {%- else -%}—{%- endif -%}
-        </td>
-        <td class="truncate" title="{{ h.kernel or '' }}">{{ h.kernel or '—' }}</td>
-        <td>
-          {%- if h.virt_role -%}
-            {{ h.virt_role }}{% if h.virt_type and h.virt_type != 'NA' %} / {{ h.virt_type }}{% endif %}
-          {%- else -%}—{%- endif -%}
-        </td>
-        <td>{{ h.memtotal_mb | mem_gb }}</td>
-        <td>{{ h.vcpus or '—' }}</td>
-        <td>{{ h.uptime_seconds | uptime }}</td>
-        <td><small title="{{ h.last_seen_at }}">{{ h.last_seen_at | naturaltime }}</small></td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-</figure>
-{% else %}
-<p><em>No hosts currently in this group.</em></p>
-{% endif %}
+{% include "_group_hosts_table.html" %}
 {% endblock %}

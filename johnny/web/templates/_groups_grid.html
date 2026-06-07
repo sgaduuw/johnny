@@ -1,0 +1,45 @@
+{%- from "_macros.html" import sort_link, search_form -%}
+<section id="groups-grid">
+  {{ search_form(
+       'groups-search', 'index', 'groups-grid',
+       query_str, current_sort, current_dir,
+       'Search groups…',
+       'Scoped search.
+Scopes: name:, description:.
+Comma OR within scope: name:web,db.
+Bare terms match name + description.'
+  ) }}
+  {#- Cards don't have column headers, so sort lives in a small bar. -#}
+  <p class="sort-bar">
+    <small>
+      Sort:
+      {{ sort_link('Name', 'name', current_sort, current_dir, 'index', 'groups-grid', 'groups-search', query_str) }}
+      ·
+      {{ sort_link('First seen', 'first_seen_at', current_sort, current_dir, 'index', 'groups-grid', 'groups-search', query_str) }}
+      ·
+      {{ sort_link('Last seen', 'last_seen_at', current_sort, current_dir, 'index', 'groups-grid', 'groups-search', query_str) }}
+      &nbsp;·&nbsp;{{ groups|length }} shown
+    </small>
+  </p>
+  {% if groups %}
+  <div class="grid groups-grid">
+    {% for group, count in groups %}
+    <article class="group-card">
+      <header>
+        <a href="{{ url_for('group_detail', group_name=group.name) }}">
+          <strong>{{ group.name }}</strong>
+        </a>
+      </header>
+      <p>
+        <strong>{{ count }}</strong> host{{ '' if count == 1 else 's' }}
+      </p>
+      {% if group.description %}
+      <small>{{ group.description }}</small>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p><em>{% if query_str %}No groups match this query.{% else %}No groups seen yet. Run a playbook with the johnny callback plugin enabled.{% endif %}</em></p>
+  {% endif %}
+</section>

@@ -8,12 +8,13 @@ not pixel-level UX regressions.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterator
 from uuid import uuid4
 
 import pytest
 from flask.testing import FlaskClient
+from sqlalchemy import update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -27,8 +28,12 @@ from johnny.contracts.v1 import (
     TaskEvent,
     TaskStatus,
 )
+from johnny.persistence import Host, Playbook
+from johnny.persistence.models import PlaybookStatus
+from johnny.services.hosts import HostService
 from johnny.services.ingest import CallbackIngest
-from johnny.web import _play_stats, create_app
+from johnny.services.plays import PLAY_PAGE_SIZE, PlayService
+from johnny.web import _mem_gb, _naturaltime, _play_stats, _uptime, create_app
 
 
 @pytest.fixture
@@ -163,6 +168,67 @@ class TestHostDetail:
         assert "Fact history" in body
         assert "ansible_default_ipv4" in body  # raw facts dump
 
+    def test_bare_host_with_no_history_renders(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # A Host row can exist with empty last_facts + no history rows
+        # (e.g. EventService.get_or_create_by_fqdn manufactured one for
+        # an unfacted host). The detail page conditionally branches on
+        # uptime/history; smoke that the template doesn't 500.
+        session.add(Host(fqdn="bare.example.com", last_facts={}))
+        session.commit()
+        r = client.get("/h/bare.example.com/")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "bare.example.com" in body
+        assert "No fact snapshots recorded" in body
+
+    def test_live_region_polls_every_30s(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # Snapshot — deliberately brittle. The auto-refresh layer is a
+        # poll on the live region with `every 30s`; this test locks the
+        # cadence so a stray edit (or copy-paste from a different
+        # template) doesn't accidentally crank it to 1s or drop the
+        # poll entirely. When changing the cadence on purpose, update
+        # the assertion in the same commit.
+        _seed_full_play(session)
+        r = client.get("/h/web1.example.com/")
+        body = r.data.decode()
+        assert 'id="host-live"' in body
+        assert 'hx-trigger="every 30s"' in body
+        assert 'hx-swap="outerHTML"' in body
+
+    def test_htmx_request_returns_live_partial_only(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # HX-Request: rendered fragment is just the live region.
+        # No <!doctype html>, no breadcrumb, no raw-facts dump.
+        # Raw facts are explicitly out of scope per #14 item 2.
+        _seed_full_play(session)
+        r = client.get(
+            "/h/web1.example.com/", headers={"HX-Request": "true"}
+        )
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "<!doctype html>" not in body.lower()
+        assert "Raw facts" not in body
+        assert 'id="host-live"' in body
+        # The live partial does include the metric grid + history.
+        assert "Last seen" in body
+        assert "Fact history" in body
+
+    def test_full_page_includes_raw_facts_dump(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # Plain GET still includes the raw-facts dump outside the
+        # poll region — a manual reload is the way to refresh it.
+        _seed_full_play(session)
+        r = client.get("/h/web1.example.com/")
+        body = r.data.decode()
+        assert "Raw facts" in body
+        assert "ansible_default_ipv4" in body
+
 
 class TestPlaybooksList:
     def test_empty_state_renders(self, client: FlaskClient) -> None:
@@ -192,13 +258,17 @@ class TestPlayStatsFilter:
         assert _play_stats({}) is None
 
     def test_sums_task_counts_across_hosts(self) -> None:
+        # All seven counters are summed: ok/changed/failed/unreachable/
+        # skipped/rescued/ignored. Don't drop any — every counter pair
+        # the dashboard might surface needs an assertion or it'll silently
+        # regress if the filter shape changes.
         stats = {
             "a.example.com": {"ok": 5, "changed": 1, "failed": 0,
                               "unreachable": 0, "skipped": 2,
-                              "rescued": 0, "ignored": 0},
+                              "rescued": 1, "ignored": 3},
             "b.example.com": {"ok": 3, "changed": 2, "failed": 1,
                               "unreachable": 0, "skipped": 0,
-                              "rescued": 0, "ignored": 0},
+                              "rescued": 2, "ignored": 1},
         }
         out = _play_stats(stats)
         assert out is not None
@@ -208,6 +278,8 @@ class TestPlayStatsFilter:
         assert out["failed"] == 1
         assert out["unreachable"] == 0
         assert out["skipped"] == 2
+        assert out["rescued"] == 3
+        assert out["ignored"] == 4
 
     def test_tolerates_missing_keys_in_host_dict(self) -> None:
         # Older or partial wire payloads may omit some counter keys;
@@ -228,6 +300,98 @@ class TestPlayStatsFilter:
         assert out["failed"] == 0
 
 
+class TestNaturaltimeFilter:
+    """Friendly relative-time string for timestamp cells.
+
+    Boundaries (60s / 3600s / 86400s) matter because the format string
+    changes at each. None and future-dated values get dedicated labels
+    so the UI never renders an empty or negative value."""
+
+    def test_none_renders_never(self) -> None:
+        assert _naturaltime(None) == "never"
+
+    def test_future_dated(self) -> None:
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        assert _naturaltime(future) == "in the future"
+
+    def test_seconds_window(self) -> None:
+        thirty_sec = datetime.now(timezone.utc) - timedelta(seconds=30)
+        out = _naturaltime(thirty_sec)
+        # Allow ±1s slack for scheduling between `now()` calls.
+        assert out in {"29s ago", "30s ago", "31s ago"}
+
+    def test_minutes_window(self) -> None:
+        five_min = datetime.now(timezone.utc) - timedelta(minutes=5)
+        assert _naturaltime(five_min) == "5m ago"
+
+    def test_hours_window(self) -> None:
+        five_hr = datetime.now(timezone.utc) - timedelta(hours=5)
+        assert _naturaltime(five_hr) == "5h ago"
+
+    def test_days_window(self) -> None:
+        five_days = datetime.now(timezone.utc) - timedelta(days=5)
+        assert _naturaltime(five_days) == "5d ago"
+
+    def test_boundary_just_under_minute(self) -> None:
+        # 59s ago is still "Xs ago"; 61s flips to "1m ago".
+        assert _naturaltime(
+            datetime.now(timezone.utc) - timedelta(seconds=59)
+        ).endswith("s ago")
+        assert _naturaltime(
+            datetime.now(timezone.utc) - timedelta(seconds=61)
+        ) == "1m ago"
+
+
+class TestUptimeFilter:
+    """`ansible_uptime_seconds` formatter; pure integer-to-string."""
+
+    def test_none_renders_em_dash(self) -> None:
+        assert _uptime(None) == "—"
+
+    def test_minutes_only(self) -> None:
+        assert _uptime(120) == "2m"
+
+    def test_hours_with_remainder_minutes(self) -> None:
+        assert _uptime(3600 + 1800) == "1h 30m"
+
+    def test_days_with_remainder_hours(self) -> None:
+        assert _uptime(86400 + 3 * 3600) == "1d 3h"
+
+    def test_zero(self) -> None:
+        # Zero uptime is technically possible (just-rebooted host caught
+        # mid-fact-gather); render as "0m" rather than "—".
+        assert _uptime(0) == "0m"
+
+    def test_boundary_exactly_one_hour(self) -> None:
+        # 3600s = "1h 0m"; not "60m" (don't flip back to the minutes form).
+        assert _uptime(3600) == "1h 0m"
+
+    def test_boundary_exactly_one_day(self) -> None:
+        # 86400s = "1d 0h"; not "24h 0m".
+        assert _uptime(86400) == "1d 0h"
+
+
+class TestMemGbFilter:
+    """`ansible_memtotal_mb` formatter. Below 1 GB stays in MB so
+    edge hosts don't render as "0 GB"."""
+
+    def test_none_renders_em_dash(self) -> None:
+        assert _mem_gb(None) == "—"
+
+    def test_megabytes(self) -> None:
+        assert _mem_gb(512) == "512 MB"
+
+    def test_just_under_a_gig(self) -> None:
+        assert _mem_gb(1023) == "1023 MB"
+
+    def test_exactly_a_gig(self) -> None:
+        # 1024 MB flips into the GB form.
+        assert _mem_gb(1024) == "1 GB"
+
+    def test_several_gigs(self) -> None:
+        assert _mem_gb(65536) == "64 GB"
+
+
 class TestPlaybookDetail:
     def test_404_for_unknown_playbook(self, client: FlaskClient) -> None:
         r = client.get(f"/playbooks/{uuid4()}")
@@ -244,3 +408,534 @@ class TestPlaybookDetail:
         assert "web1.example.com" in body  # roster
         assert "install nginx" in body  # event task name
         assert "200ms" in body  # event duration
+
+    def test_running_playbook_with_no_data_renders(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # A play in RUNNING state has no roster, no events, no stats.
+        # The detail template branches on each; smoke that it doesn't
+        # 500 in this state (the most common state when an operator
+        # clicks through mid-play).
+        pid = uuid4()
+        PlayService(session).start(
+            PlaybookStart(
+                id=pid,
+                name="midflight.yml",
+                inventory_sources=["inventory.yml"],
+                started_at=datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc),
+                user="ansible",
+            )
+        )
+        session.commit()
+        r = client.get(f"/playbooks/{pid}")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "midflight.yml" in body
+        assert "running" in body
+        assert "No roster recorded" in body
+        assert "No events recorded" in body
+
+
+def _seed_two_plays(session: Session) -> tuple[str, str]:
+    """Seed two distinct plays so filter/sort have something to bite."""
+    svc = PlayService(session)
+    a = PlaybookStart(
+        id=uuid4(),
+        name="alpha-deploy.yml",
+        inventory_sources=["prod.yml"],
+        started_at=datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc),
+        user="ansible",
+    )
+    b = PlaybookStart(
+        id=uuid4(),
+        name="zulu-deploy.yml",
+        inventory_sources=["staging.yml"],
+        started_at=datetime(2026, 5, 9, 12, 0, tzinfo=timezone.utc),
+        user="cron",
+    )
+    svc.start(a)
+    svc.start(b)
+    session.execute(
+        update(Playbook).where(Playbook.id == a.id)
+        .values(status=PlaybookStatus.FAILED)
+    )
+    session.execute(
+        update(Playbook).where(Playbook.id == b.id)
+        .values(status=PlaybookStatus.FINISHED)
+    )
+    session.commit()
+    return str(a.id), str(b.id)
+
+
+class TestListSearchAndSort:
+    """Smoke the scoped-search + sortable-header wiring on the list routes."""
+
+    def test_scoped_status_filter_on_playbooks(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_two_plays(session)
+        r = client.get("/playbooks?q=status:failed")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "alpha-deploy.yml" in body
+        assert "zulu-deploy.yml" not in body
+
+    def test_bare_term_matches_name_or_user(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_two_plays(session)
+        r = client.get("/playbooks?q=cron")
+        body = r.data.decode()
+        # `cron` is the user on zulu; should appear, alpha shouldn't.
+        assert "zulu-deploy.yml" in body
+        assert "alpha-deploy.yml" not in body
+
+    def test_inventory_scope_matches_json_list_entry(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_two_plays(session)
+        r = client.get("/playbooks?q=inventory:prod")
+        body = r.data.decode()
+        assert "alpha-deploy.yml" in body
+        assert "zulu-deploy.yml" not in body
+
+    def test_sort_by_name_asc(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_two_plays(session)
+        r = client.get("/playbooks?sort=name&dir=asc")
+        body = r.data.decode()
+        assert body.index("alpha-deploy.yml") < body.index("zulu-deploy.yml")
+
+    def test_sort_by_name_desc(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_two_plays(session)
+        r = client.get("/playbooks?sort=name&dir=desc")
+        body = r.data.decode()
+        assert body.index("zulu-deploy.yml") < body.index("alpha-deploy.yml")
+
+    def test_unknown_sort_param_falls_back_to_default(
+        self, client: FlaskClient
+    ) -> None:
+        # Bad params shouldn't 400 a browse interaction.
+        r = client.get("/playbooks?sort=lol&dir=sideways")
+        assert r.status_code == 200
+
+    def test_htmx_request_returns_partial_not_full_page(
+        self, client: FlaskClient
+    ) -> None:
+        r = client.get("/playbooks", headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "<!doctype html>" not in body.lower()
+        assert 'id="plays-tbl"' in body
+
+    def test_full_page_render_includes_html_shell(
+        self, client: FlaskClient
+    ) -> None:
+        r = client.get("/playbooks")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert body.lower().startswith("<!doctype html>")
+        assert 'id="plays-tbl"' in body
+
+    def test_groups_index_search_filters_by_name(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_full_play(session)
+        r = client.get("/?q=name:web")
+        body = r.data.decode()
+        assert "webservers" in body
+        assert "linux" not in body or "linux</strong>" not in body
+
+    def test_group_detail_kernel_scope(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_full_play(session)
+        # Match against the seeded host's kernel substring.
+        r = client.get("/g/all/?q=kernel:6.1")
+        body = r.data.decode()
+        assert "web1.example.com" in body
+
+    def test_playbooks_name_scope(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_two_plays(session)
+        r = client.get("/playbooks?q=name:alpha")
+        body = r.data.decode()
+        assert "alpha-deploy.yml" in body
+        assert "zulu-deploy.yml" not in body
+
+    def test_playbooks_user_scope(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_two_plays(session)
+        r = client.get("/playbooks?q=user:cron")
+        body = r.data.decode()
+        # `cron` is zulu's user (alpha uses `ansible`).
+        assert "zulu-deploy.yml" in body
+        assert "alpha-deploy.yml" not in body
+
+    def test_playbooks_unknown_status_silently_drops_filter(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # An operator-typed `status:notreal` doesn't 400; the scope's
+        # values that fail PlaybookStatus() are silently dropped, and
+        # since the resulting `allowed` list is empty, the where()
+        # never runs. Result: both plays still appear.
+        _seed_two_plays(session)
+        r = client.get("/playbooks?q=status:notreal")
+        body = r.data.decode()
+        assert "alpha-deploy.yml" in body
+        assert "zulu-deploy.yml" in body
+
+    def test_playbooks_sort_started_at_desc_is_default(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # Default sort is started_at desc; zulu started later than
+        # alpha, so it appears first. Exercises the desc branch of
+        # `_apply_play_sort` directly.
+        _seed_two_plays(session)
+        r = client.get("/playbooks")
+        body = r.data.decode()
+        assert body.index("zulu-deploy.yml") < body.index("alpha-deploy.yml")
+
+    def test_group_detail_fqdn_scope(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_full_play(session)
+        r = client.get("/g/all/?q=fqdn:web1")
+        body = r.data.decode()
+        assert "web1.example.com" in body
+
+    def test_group_detail_virt_scope(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_full_play(session)
+        # Matches against virt_role OR virt_type — the seeded host is
+        # `guest` / `kvm`, so either substring resolves.
+        r = client.get("/g/all/?q=virt:kvm")
+        body = r.data.decode()
+        assert "web1.example.com" in body
+
+    def test_group_detail_ip_scope(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_full_play(session)
+        r = client.get("/g/all/?q=ip:10.0")
+        body = r.data.decode()
+        assert "web1.example.com" in body
+
+    def test_group_detail_bare_term_matches_distribution(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # Bare terms OR across (Host.fqdn, Host.distribution, Host.kernel);
+        # "Debian" hits the distribution column.
+        _seed_full_play(session)
+        r = client.get("/g/all/?q=Debian")
+        body = r.data.decode()
+        assert "web1.example.com" in body
+
+    def test_group_detail_os_scope(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # `os:` matches against distribution OR distribution_version;
+        # "Debian" lands via distribution, "12.5" via version.
+        _seed_full_play(session)
+        r = client.get("/g/all/?q=os:Debian")
+        body = r.data.decode()
+        assert "web1.example.com" in body
+        r = client.get("/g/all/?q=os:12.5")
+        assert "web1.example.com" in r.data.decode()
+
+    def test_group_detail_sort_kernel_desc(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # Exercises the desc branch of `_apply_host_sort`.
+        _seed_full_play(session)
+        r = client.get("/g/all/?sort=kernel&dir=desc")
+        assert r.status_code == 200
+
+    def test_groups_index_description_scope(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # `description:` exercises the description branch of
+        # `_apply_group_search`. Set a description on the seeded
+        # group first.
+        from johnny.services.groups import GroupService
+        _seed_full_play(session)
+        GroupService(session).set_description(
+            "webservers", "front-end HTTP"
+        )
+        session.commit()
+        r = client.get("/?q=description:HTTP")
+        body = r.data.decode()
+        assert "webservers" in body
+
+    def test_groups_index_bare_term_matches_description(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # Bare terms on the groups index OR across (name, description);
+        # "front-end" should land via description.
+        from johnny.services.groups import GroupService
+        _seed_full_play(session)
+        GroupService(session).set_description(
+            "webservers", "front-end HTTP"
+        )
+        session.commit()
+        r = client.get("/?q=front-end")
+        body = r.data.decode()
+        assert "webservers" in body
+
+    def test_groups_index_sort_last_seen_desc(
+        self, client: FlaskClient
+    ) -> None:
+        # Exercises the desc branch of `_apply_group_sort`.
+        r = client.get("/?sort=last_seen_at&dir=desc")
+        assert r.status_code == 200
+
+
+def _seed_two_snapshots(session: Session) -> tuple[int, int, str]:
+    """Two snapshots of the same host with one differing key.
+
+    Returns (older_id, newer_id, fqdn)."""
+    svc = HostService(session)
+    pb_id = uuid4()
+    session.add(Playbook(
+        id=pb_id, name="diff.yml",
+        inventory_sources=["inv.yml"],
+        started_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        user="u",
+    ))
+    session.flush()
+    base = {
+        "ansible_default_ipv4": {"address": "10.0.0.1"},
+        "ansible_kernel": "6.1.0",
+    }
+    svc.upsert_from_record(
+        pb_id,
+        datetime(2026, 5, 1, tzinfo=timezone.utc),
+        FactRecord(
+            fqdn="diffhost.example.com",
+            inventory_hostname="diffhost",
+            groups=[],
+            ansible_facts=base,
+        ),
+    )
+    svc.upsert_from_record(
+        pb_id,
+        datetime(2026, 5, 2, tzinfo=timezone.utc),
+        FactRecord(
+            fqdn="diffhost.example.com",
+            inventory_hostname="diffhost",
+            groups=[],
+            ansible_facts={**base, "ansible_kernel": "6.6.0"},
+        ),
+    )
+    session.commit()
+    history = svc.history("diffhost.example.com")
+    return history[1].id, history[0].id, "diffhost.example.com"
+
+
+class TestFactDiff:
+    """`/h/<fqdn>/diff?a=A&b=B` renders a unified diff between two
+    fact-history snapshots; entry points live on the host_detail
+    page (per-row link + form for arbitrary pair compare)."""
+
+    def test_renders_diff_with_added_and_removed(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        a_id, b_id, fqdn = _seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/diff?a={a_id}&b={b_id}")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "Fact diff" in body
+        # The kernel value before and after should both appear.
+        assert "6.1.0" in body
+        assert "6.6.0" in body
+        # The CSS classes for added/removed should be applied.
+        assert "diff-add" in body
+        assert "diff-rm" in body
+
+    def test_self_diff_renders_no_changes_message(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        a_id, _b_id, fqdn = _seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/diff?a={a_id}&b={a_id}")
+        assert r.status_code == 200
+        assert b"No changes between the two snapshots" in r.data
+
+    def test_404_on_unknown_history_id(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        a_id, _b_id, fqdn = _seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/diff?a={a_id}&b=9999999")
+        assert r.status_code == 404
+
+    def test_400_on_garbage_query_params(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _a, _b, fqdn = _seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/diff?a=lol&b=wat")
+        assert r.status_code == 400
+
+    def test_404_on_unknown_host(self, client: FlaskClient) -> None:
+        r = client.get("/h/never.seen.com/diff?a=1&b=2")
+        assert r.status_code == 404
+
+    def test_404_when_row_belongs_to_other_host(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # URL tampering: ?a points at a row on a different host.
+        a_id, b_id, fqdn_a = _seed_two_snapshots(session)
+        # Seed a row on a *second* host.
+        svc = HostService(session)
+        pb_id = uuid4()
+        session.add(Playbook(
+            id=pb_id, name="other.yml",
+            inventory_sources=["inv.yml"],
+            started_at=datetime(2026, 5, 3, tzinfo=timezone.utc),
+            user="u",
+        ))
+        session.flush()
+        svc.upsert_from_record(
+            pb_id,
+            datetime(2026, 5, 3, tzinfo=timezone.utc),
+            FactRecord(
+                fqdn="other.example.com",
+                inventory_hostname="other",
+                groups=[],
+                ansible_facts={"ansible_kernel": "6.1.0"},
+            ),
+        )
+        session.commit()
+        other_row_id = svc.history("other.example.com")[0].id
+        r = client.get(f"/h/{fqdn_a}/diff?a={a_id}&b={other_row_id}")
+        assert r.status_code == 404
+
+    def test_host_detail_carries_compare_to_current_link(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # With two snapshots, the older row gets the "compare to current"
+        # link; the latest row does not (it's already current).
+        a_id, b_id, fqdn = _seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/")
+        body = r.data.decode()
+        assert "compare to current" in body
+        assert f"a={a_id}&amp;b={b_id}" in body or f"a={a_id}&b={b_id}" in body
+
+    def test_host_detail_carries_arbitrary_pair_form(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        a_id, b_id, fqdn = _seed_two_snapshots(session)
+        r = client.get(f"/h/{fqdn}/")
+        body = r.data.decode()
+        assert 'class="diff-pair-form"' in body
+        # Both <select>s should list both history ids as <option>s.
+        assert f'value="{a_id}"' in body
+        assert f'value="{b_id}"' in body
+
+
+def _seed_n_plays(session: Session, n: int) -> None:
+    svc = PlayService(session)
+    for i in range(n):
+        svc.start(
+            PlaybookStart(
+                id=uuid4(),
+                name=f"play-{i:03d}.yml",
+                inventory_sources=["inv.yml"],
+                started_at=datetime(2026, 1, 1, tzinfo=timezone.utc)
+                + timedelta(seconds=i),
+                user="ansible",
+            )
+        )
+    session.commit()
+
+
+class TestLoadMorePagination:
+    """Page=1 carries a Load-more <tr> when has_more; HX-Request page>1
+    returns the rows-only fragment ready to swap into the Load-more's
+    place; final page omits the Load-more row."""
+
+    def test_full_render_shows_load_more_when_more_rows_exist(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # Seed PLAY_PAGE_SIZE + 1 to force a Load-more on page 1.
+        _seed_n_plays(session, PLAY_PAGE_SIZE + 1)
+        r = client.get("/playbooks")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert 'id="plays-load-more"' in body
+        assert "Load more" in body
+
+    def test_full_render_omits_load_more_when_no_more_rows(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_n_plays(session, 3)
+        r = client.get("/playbooks")
+        body = r.data.decode()
+        assert 'id="plays-load-more"' not in body
+
+    def test_htmx_page2_returns_rows_only_partial(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_n_plays(session, PLAY_PAGE_SIZE + 5)
+        r = client.get(
+            "/playbooks?page=2",
+            headers={"HX-Request": "true"},
+        )
+        assert r.status_code == 200
+        body = r.data.decode()
+        # Rows-only partial: no <table>, no <thead>, no search form.
+        assert "<table>" not in body
+        assert 'id="plays-search"' not in body
+        # Only the trailing 5 plays appear; first PLAY_PAGE_SIZE skipped.
+        # play-{N-1:03d}.yml is the most recent (last seeded), so page 2
+        # under desc-by-started_at gets the older ones.
+        assert "<tr>" in body
+        # Last page → no Load-more row.
+        assert 'id="plays-load-more"' not in body
+
+    def test_htmx_page2_with_more_data_keeps_load_more(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_n_plays(session, PLAY_PAGE_SIZE * 2 + 1)
+        r = client.get(
+            "/playbooks?page=2",
+            headers={"HX-Request": "true"},
+        )
+        body = r.data.decode()
+        assert 'id="plays-load-more"' in body  # still more on page 3
+
+    def test_non_htmx_request_with_page_param_renders_full_page(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        # Direct GET ?page=2 (no HX header): always full page render.
+        # Page param is an HTMX-driven append mechanism, not a deep
+        # link.
+        _seed_n_plays(session, PLAY_PAGE_SIZE + 1)
+        r = client.get("/playbooks?page=2")
+        body = r.data.decode()
+        assert body.lower().startswith("<!doctype html>")
+
+    def test_garbage_page_falls_back_to_1(
+        self, client: FlaskClient, session: Session
+    ) -> None:
+        _seed_n_plays(session, 3)
+        r = client.get("/playbooks?page=lolwhat")
+        assert r.status_code == 200
+        # All three plays present (we'd see 0 if it tried offset=garbage).
+        body = r.data.decode()
+        assert "play-000.yml" in body
+        assert "play-002.yml" in body
+
+
+class TestFooterVersion:
+    def test_footer_shows_johnny_version(self, client: FlaskClient) -> None:
+        from johnny import __version__
+
+        r = client.get("/")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert f"johnny {__version__}" in body

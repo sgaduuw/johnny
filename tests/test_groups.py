@@ -137,8 +137,35 @@ class TestHostsIn:
         svc.upsert_membership(h2.id, ["webservers"], captured, playbook.id)
         group = svc.get_by_name("webservers")
         assert group is not None
-        fqdns = [h.fqdn for h in svc.hosts_in(group)]
+        hosts, has_more = svc.hosts_in(group)
+        fqdns = [h.fqdn for h in hosts]
         assert fqdns == ["web1.example.com", "web2.example.com"]
+        assert has_more is False
+
+    def test_pagination_signals_has_more_then_terminates(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        # page_size+1 fetch trick: with page_size=2 and 3 members,
+        # page 1 returns 2 rows + has_more=True, page 2 returns 1 + False.
+        svc = GroupService(session)
+        captured = datetime.now(timezone.utc)
+        for fqdn in ("a.example.com", "b.example.com", "c.example.com"):
+            host = _make_host(session, fqdn)
+            svc.upsert_membership(host.id, ["webservers"], captured, playbook.id)
+        group = svc.get_by_name("webservers")
+        assert group is not None
+
+        first, more1 = svc.hosts_in(group, page=1, page_size=2)
+        assert [h.fqdn for h in first] == ["a.example.com", "b.example.com"]
+        assert more1 is True
+
+        second, more2 = svc.hosts_in(group, page=2, page_size=2)
+        assert [h.fqdn for h in second] == ["c.example.com"]
+        assert more2 is False
+
+        third, more3 = svc.hosts_in(group, page=3, page_size=2)
+        assert third == []
+        assert more3 is False
 
 
 class TestSetDescription:
@@ -207,6 +234,43 @@ class TestRebuildFromHistory:
         assert legacy is not None
         assert legacy.first_seen_at == t0
         assert legacy.last_seen_at == t0
+
+    def test_rebuild_advances_last_seen_when_play_is_newer(
+        self, session: Session
+    ) -> None:
+        """A pre-existing Group row gets its `last_seen_at` advanced
+        if the rebuild walks a playbook started after the group's
+        current last_seen. Exercises the else-branch's `last >
+        group.last_seen_at` update path."""
+        host = _make_host(session, "web1.example.com")
+        svc = GroupService(session)
+        t0 = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        # First observation: group created at t0.
+        pb_old = _make_play(session, t0, name="old")
+        svc.upsert_membership(host.id, ["webservers"], t0, pb_old.id)
+        # Second observation, t1, via the audit log only (no upsert
+        # this time — that's the path the rebuild walks).
+        t1 = t0 + timedelta(days=7)
+        pb_new = _make_play(session, t1, name="new")
+        session.add(
+            PlaybookHost(
+                playbook_id=pb_new.id,
+                host_id=host.id,
+                inventory_hostname="web1",
+                groups=["webservers"],
+            )
+        )
+        session.flush()
+
+        result = svc.rebuild_from_history()
+        # Note: rebuild walks `playbook_hosts` rows, not the
+        # upsert_membership history; only one PH row is in scope
+        # (the t1 one), so group_seen reports (t1, t1).
+        assert result["memberships"] == 1
+        group = svc.get_by_name("webservers")
+        assert group is not None
+        # The else-branch noticed t1 > existing last_seen and bumped it.
+        assert group.last_seen_at == t1
 
     def test_rebuild_preserves_descriptions(
         self, session: Session, playbook: Playbook

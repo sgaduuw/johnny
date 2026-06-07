@@ -5,12 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from johnny.contracts.v1 import TaskEvent, TaskStatus
 from johnny.persistence import Event, Host, Playbook
-from johnny.services.events import EventService
+from johnny.services.events import EventService, _insert_ignore_event
 
 
 def _event(
@@ -78,16 +79,34 @@ class TestRecordBatch:
     def test_idempotent_on_event_uuid(
         self, session: Session, playbook: Playbook
     ) -> None:
+        # First-write-wins on event_uuid collision. Re-POSTing with the
+        # same uuid but *different* field values must keep the first
+        # values — anything else is INSERT OR REPLACE smuggled in.
         svc = EventService(session)
         uuid = uuid4()
-        first = _event(event_uuid=uuid)
-        accepted_a, ignored_a = svc.record_batch(playbook.id, [first])
-        accepted_b, ignored_b = svc.record_batch(
-            playbook.id, [_event(event_uuid=uuid)]
+        svc.record_batch(
+            playbook.id,
+            [_event(
+                event_uuid=uuid,
+                task_name="install nginx",
+                status=TaskStatus.OK,
+                stdout="first stdout",
+            )],
         )
-        assert (accepted_a, ignored_a) == (1, 0)
+        accepted_b, ignored_b = svc.record_batch(
+            playbook.id,
+            [_event(
+                event_uuid=uuid,
+                task_name="WRONG TASK",
+                status=TaskStatus.FAILED,
+                stdout="should never persist",
+            )],
+        )
         assert (accepted_b, ignored_b) == (0, 1)
-        assert session.query(Event).count() == 1
+        ev = session.scalars(select(Event)).one()
+        assert ev.task_name == "install nginx"
+        assert ev.status.value == "ok"
+        assert ev.stdout == "first stdout"
 
     def test_partial_overlap_counts_correctly(
         self, session: Session, playbook: Playbook
@@ -193,6 +212,10 @@ class TestForPlay:
     def test_returns_chronological_order(
         self, session: Session, playbook: Playbook
     ) -> None:
+        # Insert out of order; verify the service re-orders to ascending
+        # started_at by comparing against the *known* timestamps. The
+        # earlier sorted-against-itself assertion passed regardless of
+        # whether the SQL ORDER BY ran.
         svc = EventService(session)
         t0 = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
         events = [
@@ -202,7 +225,11 @@ class TestForPlay:
         ]
         svc.record_batch(playbook.id, events)
         out = svc.for_play(playbook.id)
-        assert [e.started_at for e in out] == sorted(e.started_at for e in out)
+        assert [e.started_at for e in out] == [
+            t0,
+            t0 + timedelta(seconds=1),
+            t0 + timedelta(seconds=2),
+        ]
 
     def test_filters_by_playbook_id(
         self, session: Session, playbook: Playbook
@@ -253,3 +280,21 @@ class TestPrune:
             older_than=datetime.now(timezone.utc)
         )
         assert deleted == 0
+
+
+class TestInsertIgnoreDialect:
+    """`_insert_ignore_event` chooses SQLite or Postgres SQL based on
+    the bound dialect; anything else is genuinely unsupported and must
+    fail loud rather than fall back to a behaviour-different INSERT.
+
+    Currently exercised at the boundary only; if a third dialect is
+    added (e.g. mysql), the bare `raise NotImplementedError` must keep
+    that path closed until SQL is written for it."""
+
+    def test_unknown_dialect_raises_not_implemented(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bind = session.get_bind()
+        monkeypatch.setattr(bind.dialect, "name", "mysql")
+        with pytest.raises(NotImplementedError, match="mysql"):
+            _insert_ignore_event(session)

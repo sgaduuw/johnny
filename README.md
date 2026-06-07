@@ -34,10 +34,41 @@ controller.
 Read-only UI. All writes happen via the callback plugin POSTing to
 the api tier.
 
+### Search and sort
+
+Every list page (groups index, hosts in a group, playbooks) carries
+a search box and sortable column headers. Updates swap in place via
+HTMX; the URL pushes on every change so deep links and the back
+button preserve state.
+
+The search box accepts a small `key:value` grammar:
+
+```
+nginx                          bare term, OR'd across the
+                               default columns for that list
+user:eelco                     scoped match
+status:failed,unreachable      comma-OR within a scope
+name:"deploy nginx"            quote whitespace
+ip:[fe80::1]                   brackets for `:`-bearing values
+                               (IPv6 literals)
+user:eelco status:failed nginx all of the above, AND'd together
+```
+
+Hover the input for the per-list scope vocabulary. Scopes per list:
+
+| Page             | Scopes                                      |
+|------------------|---------------------------------------------|
+| `/`              | `name`, `description`                       |
+| `/playbooks`     | `name`, `user`, `status`, `inventory`       |
+| `/g/<group>/`    | `fqdn`, `os`, `kernel`, `virt`, `ip`        |
+
+Unknown scopes degrade to bare terms — `weh:foo` matches as the
+literal string rather than silently disappearing.
+
 ## Status
 
-v0.1.0 (2026-05-08). First tagged release; pairs with
-[johnny-callback v0.1.0][cb-rel].
+v0.4.1 (2026-06-07). Pairs with
+[johnny-callback v0.2.1][cb-rel].
 
 [cb-rel]: https://galaxy.ansible.com/ui/repo/published/sgaduuw/johnny/
 
@@ -64,7 +95,7 @@ Three containers come up:
 Then on your Ansible controller, install the callback plugin:
 
 ```sh
-ansible-galaxy collection install sgaduuw.johnny:0.1.0
+ansible-galaxy collection install sgaduuw.johnny:0.2.1
 ```
 
 …and configure it with the same token (`JOHNNY_API_TOKEN`) and
@@ -152,18 +183,18 @@ ingest.
 ## Development
 
 ```sh
-poetry install
-poetry run pytest                                       # 115 tests, ~1s
-poetry run ruff check johnny/ tests/
-poetry run alembic upgrade head                         # apply schema
-poetry run uvicorn 'johnny.api:create_app' --factory \
-    --host 0.0.0.0 --port 8001                          # api tier
-poetry run gunicorn -w 2 -b 0.0.0.0:8000 \
-    'johnny.web:create_app()'                           # web tier
-poetry run johnny prune --older-than-days 30            # CLI sweep
-poetry run johnny groups-rebuild                        # backfill groups
-poetry run johnny group describe webservers "..."       # set description
-poetry run python scripts/seed_mock.py                  # demo fleet data
+uv sync
+uv run pytest                                       # 269 tests, ~1s
+uv run ruff check johnny/ tests/
+uv run alembic upgrade head                         # apply schema
+uv run uvicorn 'johnny.api:create_app' --factory \
+    --host 0.0.0.0 --port 8001                      # api tier
+uv run gunicorn -w 2 -b 0.0.0.0:8000 \
+    'johnny.web:create_app()'                       # web tier
+uv run johnny prune --older-than-days 30            # CLI sweep
+uv run johnny groups-rebuild                        # backfill groups
+uv run johnny group describe webservers "..."       # set description
+uv run python scripts/seed_mock.py                  # demo fleet data
 ```
 
 The Dockerfile has separate `test` and `prod` stages; CI builds

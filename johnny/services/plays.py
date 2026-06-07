@@ -4,11 +4,35 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import String, cast, or_, select
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.sql import Select
 
 from johnny.contracts.v1 import HostStatCounts, PlaybookFinish, PlaybookStart
 from johnny.persistence.models import Playbook, PlaybookHost, PlaybookStatus
+from johnny.web._search import SearchQuery
+
+# Sortable columns exposed to the list view. Keeping this an explicit
+# allowlist (rather than getattr-ing arbitrary attribute names) means
+# the URL surface is closed: `?sort=stats` doesn't suddenly work just
+# because the column exists.
+PLAY_SORT_COLUMNS = {
+    "started_at": Playbook.started_at,
+    "finished_at": Playbook.finished_at,
+    "name": Playbook.name,
+    "user": Playbook.user,
+    "status": Playbook.status,
+}
+PLAY_DEFAULT_SORT = "started_at"
+PLAY_DEFAULT_DIR = "desc"
+
+# Scopes the search box accepts on this list. Anything else round-trips
+# as a bare term (see `_search.parse`).
+PLAY_SEARCH_SCOPES = {"name", "user", "status", "inventory"}
+# Columns bare terms OR across.
+PLAY_BARE_COLUMNS = (Playbook.name, Playbook.user)
+
+PLAY_PAGE_SIZE = 50
 
 
 class PlayService:
@@ -78,13 +102,36 @@ class PlayService:
         return membership
 
 
-    def list_recent(self, limit: int = 20) -> list[Playbook]:
-        """Most-recent playbooks first, by started_at desc."""
-        return list(
-            self.session.scalars(
-                select(Playbook).order_by(Playbook.started_at.desc()).limit(limit)
-            )
+    def list_recent(
+        self,
+        sort: str = PLAY_DEFAULT_SORT,
+        direction: str = PLAY_DEFAULT_DIR,
+        query: SearchQuery | None = None,
+        page: int = 1,
+        page_size: int = PLAY_PAGE_SIZE,
+    ) -> tuple[list[Playbook], bool]:
+        """Filterable, sortable, paginated list. Default order:
+        most-recent first.
+
+        Returns `(rows, has_more)`. `has_more` is determined by
+        fetching `page_size + 1` rows; the extra row is dropped before
+        return. Avoids a second COUNT query on every page.
+
+        Unknown `sort` or `direction` silently fall back to the
+        defaults — the URL surface is user-typeable, and a bad param
+        shouldn't 400 a browse.
+        """
+        page = max(1, page)
+        offset = (page - 1) * page_size
+        stmt: Select = select(Playbook)
+        if query is not None and not query.is_empty():
+            stmt = _apply_play_search(stmt, query)
+        stmt = _apply_play_sort(stmt, sort, direction).offset(offset).limit(
+            page_size + 1
         )
+        rows = list(self.session.scalars(stmt))
+        has_more = len(rows) > page_size
+        return rows[:page_size], has_more
 
     def roster(self, playbook_id: UUID) -> list[PlaybookHost]:
         """Per-run host roster, with .host eagerly loaded for template render."""
@@ -102,3 +149,44 @@ def _derive_status(stats: dict[str, HostStatCounts]) -> PlaybookStatus:
         if counts.failed > 0 or counts.unreachable > 0:
             return PlaybookStatus.FAILED
     return PlaybookStatus.FINISHED
+
+
+def _apply_play_sort(stmt: Select, sort: str, direction: str) -> Select:
+    column = PLAY_SORT_COLUMNS.get(sort, PLAY_SORT_COLUMNS[PLAY_DEFAULT_SORT])
+    if direction == "asc":
+        return stmt.order_by(column.asc())
+    return stmt.order_by(column.desc())
+
+
+def _apply_play_search(stmt: Select, query: SearchQuery) -> Select:
+    for scope, values in query.scopes.items():
+        if scope == "name":
+            stmt = stmt.where(or_(*(Playbook.name.ilike(f"%{v}%") for v in values)))
+        elif scope == "user":
+            stmt = stmt.where(or_(*(Playbook.user.ilike(f"%{v}%") for v in values)))
+        elif scope == "status":
+            allowed = []
+            for v in values:
+                try:
+                    allowed.append(PlaybookStatus(v))
+                except ValueError:
+                    continue  # unknown status: silently drop
+            if allowed:
+                stmt = stmt.where(Playbook.status.in_(allowed))
+        elif scope == "inventory":
+            # inventory_sources is a JSON list. Cast-to-text + ILIKE is
+            # the dialect-portable form; false-positives are possible
+            # but acceptable for a browse filter.
+            stmt = stmt.where(
+                or_(
+                    *(
+                        cast(Playbook.inventory_sources, String).ilike(f"%{v}%")
+                        for v in values
+                    )
+                )
+            )
+    for term in query.bare:
+        stmt = stmt.where(
+            or_(*(col.ilike(f"%{term}%") for col in PLAY_BARE_COLUMNS))
+        )
+    return stmt

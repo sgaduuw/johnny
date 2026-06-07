@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [develop, main, "release/*", "hotfix/*"]
     tags: ["v*"]
   pull_request:
-    branches: [main]
+    branches: [develop, main, "release/*", "hotfix/*"]
 
 jobs:
   test:
@@ -18,32 +18,46 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install poetry
-        run: pip install "poetry==1.8.5"
-
-      - name: Cache poetry virtualenv
-        uses: actions/cache@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          path: ~/.cache/pypoetry/virtualenvs
-          key: poetry-${{ runner.os }}-py3.14-${{ hashFiles('poetry.lock') }}
-          restore-keys: |
-            poetry-${{ runner.os }}-py3.14-
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Install dependencies
-        run: poetry install --no-interaction
+        run: uv sync --frozen
 
       - name: Lint (ruff)
-        run: poetry run ruff check johnny/ tests/
+        run: uv run ruff check johnny/ tests/
 
       - name: Test with coverage
-        run: poetry run pytest --cov=johnny --cov-report=term --cov-fail-under=85
+        run: uv run pytest --cov=johnny --cov-report=term --cov-fail-under=97
 
       - name: Migrations apply cleanly + match models
         env:
           DATABASE_URL: sqlite:///./ci.db
         run: |
-          poetry run alembic upgrade head
-          poetry run alembic check
+          uv run alembic upgrade head
+          uv run alembic check
+
+      # `alembic check` only verifies model/migration consistency on
+      # a fresh schema. The step below also applies the head
+      # migration against a *populated* DB at the previous revision,
+      # which is the case three v0.2.x migrations broke on (see #6).
+      - name: Migration smoke against a populated DB
+        env:
+          DATABASE_URL: sqlite:///./mig-smoke.db
+        run: |
+          PREV=$(uv run alembic history --indicate-current \
+                 | awk '/->/ {print $1; exit}')
+          if [ -z "$PREV" ] || [ "$PREV" = "<base>" ]; then
+            echo "Only one revision in history; skipping smoke."
+            exit 0
+          fi
+          uv run alembic upgrade "$PREV"
+          uv run python -m tests._mig_seed "$DATABASE_URL"
+          uv run alembic upgrade head
+          uv run python -m tests._mig_smoke_assert "$DATABASE_URL"
 
   docker:
     runs-on: ubuntu-latest

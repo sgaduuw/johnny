@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -128,6 +129,26 @@ class TestLatest:
         assert h.fqdn == "nas.example.com"
 
 
+class TestListAll:
+    def test_empty(self, session: Session) -> None:
+        assert HostService(session).list_all() == []
+
+    def test_orders_by_fqdn_ascending(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        svc = HostService(session)
+        captured = datetime.now(timezone.utc)
+        for fqdn in ("c.example.com", "a.example.com", "b.example.com"):
+            svc.upsert_from_record(
+                playbook.id, captured, _record(fqdn=fqdn, inv=fqdn.split(".")[0])
+            )
+        assert [h.fqdn for h in svc.list_all()] == [
+            "a.example.com",
+            "b.example.com",
+            "c.example.com",
+        ]
+
+
 class TestHistory:
     def test_empty_for_unknown(self, session: Session) -> None:
         assert HostService(session).history("never.seen.com") == []
@@ -145,14 +166,20 @@ class TestHistory:
     def test_returned_in_descending_order(
         self, session: Session, playbook: Playbook
     ) -> None:
+        # Insert in ascending order; verify the service returns them
+        # descending by comparing against the *known* timestamps. The
+        # earlier sorted-against-itself assertion passed regardless of
+        # whether the SQL ORDER BY ran.
         svc = HostService(session)
         t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
         for i in range(3):
             svc.upsert_from_record(playbook.id, t0 + timedelta(days=i), _record())
         rows = svc.history("nas.example.com")
-        assert [r.captured_at for r in rows] == sorted(
-            [r.captured_at for r in rows], reverse=True
-        )
+        assert [r.captured_at for r in rows] == [
+            t0 + timedelta(days=2),
+            t0 + timedelta(days=1),
+            t0,
+        ]
 
     def test_filters_by_since_inclusive(
         self, session: Session, playbook: Playbook
@@ -164,6 +191,70 @@ class TestHistory:
         # since matches day 1's exact captured_at
         rows = svc.history("nas.example.com", since=t0 + timedelta(days=1))
         assert len(rows) == 2  # days 1 and 2
+
+
+class TestDiff:
+    def test_diff_shows_added_and_removed_keys(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        svc = HostService(session)
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        svc.upsert_from_record(
+            playbook.id, t0,
+            _record(facts={**_facts(), "ansible_kernel": "6.1.0"}),
+        )
+        svc.upsert_from_record(
+            playbook.id, t0 + timedelta(days=1),
+            _record(facts={**_facts(), "ansible_kernel": "6.6.0"}),
+        )
+        history = svc.history("nas.example.com")
+        # newest first; pick older + newer.
+        newer, older = history[0], history[1]
+        a, b, lines = svc.diff("nas.example.com", older.id, newer.id)
+        assert a.id == older.id
+        assert b.id == newer.id
+        # Unified-diff output: headers + at least one +/-/ block.
+        joined = "\n".join(lines)
+        assert "ansible_kernel" in joined
+        assert any(line.startswith("-") and "6.1.0" in line for line in lines)
+        assert any(line.startswith("+") and "6.6.0" in line for line in lines)
+
+    def test_diff_against_self_is_empty(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        svc = HostService(session)
+        svc.upsert_from_record(
+            playbook.id, datetime(2026, 1, 1, tzinfo=timezone.utc), _record()
+        )
+        row = svc.history("nas.example.com")[0]
+        a, b, lines = svc.diff("nas.example.com", row.id, row.id)
+        assert lines == []
+
+    def test_diff_404s_on_unknown_id(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        svc = HostService(session)
+        svc.upsert_from_record(
+            playbook.id, datetime(2026, 1, 1, tzinfo=timezone.utc), _record()
+        )
+        row = svc.history("nas.example.com")[0]
+        with pytest.raises(LookupError):
+            svc.diff("nas.example.com", row.id, 9999999)
+
+    def test_diff_404s_when_row_belongs_to_other_host(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        # URL-tampering defence: row.id valid, but host_id mismatch.
+        svc = HostService(session)
+        t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        svc.upsert_from_record(playbook.id, t, _record(fqdn="a.example.com"))
+        svc.upsert_from_record(
+            playbook.id, t, _record(fqdn="b.example.com", inv="b"),
+        )
+        a_row = svc.history("a.example.com")[0]
+        b_row = svc.history("b.example.com")[0]
+        with pytest.raises(LookupError):
+            svc.diff("a.example.com", a_row.id, b_row.id)
 
 
 class TestPruneHistory:
@@ -284,6 +375,19 @@ def _add_playbook_host(
     session.add(ph)
     session.flush()
     return ph
+
+
+class TestCountFkEmptyShortCircuit:
+    """`HostService._count_fk` returns 0 immediately for an empty
+    orphan list. Not reached from `find_merge_candidates` (which
+    only computes counts for groups with >=1 orphan) but callers
+    can pass empty; lock the behaviour."""
+
+    def test_returns_zero_without_running_a_query(
+        self, session: Session
+    ) -> None:
+        svc = HostService(session)
+        assert svc._count_fk(HostFactsHistory.host_id, []) == 0
 
 
 class TestFindMergeCandidates:

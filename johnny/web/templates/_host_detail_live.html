@@ -1,0 +1,104 @@
+{#- Live region for host_detail: header + metric cards + fact
+    history. Polls every 30s and outerHTML-swaps the whole region
+    so HTMX re-binds the trigger on the new node.
+
+    Out of scope on purpose: the raw `last_facts` dump. It's heavy
+    (a few KB of JSON for a typical host) and visually distracting
+    if it flashes during polling. New facts arrival will move
+    `last_seen_at` and the projection columns; if the operator wants
+    to see the raw blob refresh, that's a manual reload.
+-#}
+<div id="host-live"
+     hx-get="{{ url_for('host_detail', fqdn=host.fqdn) }}"
+     hx-trigger="every 30s"
+     hx-swap="outerHTML"
+     hx-push-url="false">
+  <hgroup>
+    <h2>{{ host.fqdn }}</h2>
+    <p>
+      Last seen <span title="{{ host.last_seen_at }}">{{ host.last_seen_at | naturaltime }}</span>
+      {% if host.last_seen_at and host.uptime_seconds %}
+        · uptime {{ host.uptime_seconds | uptime }}
+        <small data-tooltip="snapshot at facts-gather time, not corrected for elapsed time">(snapshot)</small>
+      {% endif %}
+    </p>
+  </hgroup>
+
+  <div class="grid">
+    <article>
+      <small>IPv4</small>
+      <h4><code>{{ host.default_ipv4 or '—' }}</code></h4>
+    </article>
+    <article>
+      <small>OS</small>
+      <h4>
+        {%- if host.distribution -%}
+          {{ host.distribution }}{% if host.distribution_version and host.distribution_version != 'NA' %} {{ host.distribution_version }}{% endif %}
+        {%- else -%}—{%- endif -%}
+      </h4>
+    </article>
+    <article>
+      <small>Kernel</small>
+      <h4><code>{{ host.kernel or '—' }}</code></h4>
+    </article>
+    <article>
+      <small>Virt</small>
+      <h4>{{ host.virt_role or '—' }}{% if host.virt_type and host.virt_type != 'NA' %} / {{ host.virt_type }}{% endif %}</h4>
+    </article>
+    <article>
+      <small>Memory</small>
+      <h4>{{ host.memtotal_mb | mem_gb }}</h4>
+    </article>
+    <article>
+      <small>vCPUs</small>
+      <h4>{{ host.vcpus or '—' }}</h4>
+    </article>
+  </div>
+
+  <h3>Fact history <small>({{ history|length }})</small></h3>
+  {% if history %}
+    {%- set latest_id = history[0].id -%}
+    {% if history|length > 1 %}
+    <form action="{{ url_for('host_diff', fqdn=host.fqdn) }}"
+          method="get" class="diff-pair-form">
+      <small>Compare any two snapshots:</small>
+      <select name="a" required>
+        {% for h in history %}
+          <option value="{{ h.id }}">{{ h.captured_at | naturaltime }}</option>
+        {% endfor %}
+      </select>
+      <span aria-hidden="true">→</span>
+      <select name="b" required>
+        {% for h in history %}
+          <option value="{{ h.id }}"{% if loop.first %} selected{% endif %}>{{ h.captured_at | naturaltime }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="outline secondary">Diff</button>
+    </form>
+    {% endif %}
+    <figure>
+      <table>
+        <thead><tr><th scope="col">Captured</th><th scope="col">Playbook</th><th scope="col"></th></tr></thead>
+        <tbody>
+        {% for h in history %}
+          <tr>
+            <td><small title="{{ h.captured_at }}">{{ h.captured_at | naturaltime }}</small></td>
+            <td><a href="{{ url_for('playbook_detail', playbook_id=h.playbook_id) }}"><code>{{ h.playbook_id }}</code></a></td>
+            <td>
+              {% if h.id != latest_id %}
+                <small>
+                  <a href="{{ url_for('host_diff', fqdn=host.fqdn, a=h.id, b=latest_id) }}">
+                    compare to current
+                  </a>
+                </small>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </figure>
+  {% else %}
+  <p><em>No fact snapshots recorded.</em></p>
+  {% endif %}
+</div>

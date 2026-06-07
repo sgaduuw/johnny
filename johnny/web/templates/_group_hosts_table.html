@@ -1,0 +1,40 @@
+{%- from "_macros.html" import sort_link, search_form -%}
+{%- set url_kwargs = {'group_name': group.name} -%}
+<section id="hosts-tbl">
+  {{ search_form(
+       'hosts-search', 'group_detail', 'hosts-tbl',
+       query_str, current_sort, current_dir,
+       'Search… e.g. os:debian kernel:6.1 virt:guest',
+       'Scoped search.
+Scopes: fqdn:, os:, kernel:, virt:, ip:.
+Comma OR within scope: os:debian,ubuntu.
+Quote whitespace: kernel:"6.1.0-26-amd64".
+Brackets for ":" in values (IPv6-style): ip:[fe80::1].
+Bare terms match fqdn + os + kernel.',
+       url_kwargs
+  ) }}
+  {% if hosts %}
+  <figure>
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">{{ sort_link('FQDN', 'fqdn', current_sort, current_dir, 'group_detail', 'hosts-tbl', 'hosts-search', query_str, url_kwargs) }}</th>
+          <th scope="col">{{ sort_link('IPv4', 'default_ipv4', current_sort, current_dir, 'group_detail', 'hosts-tbl', 'hosts-search', query_str, url_kwargs) }}</th>
+          <th scope="col">{{ sort_link('OS', 'distribution', current_sort, current_dir, 'group_detail', 'hosts-tbl', 'hosts-search', query_str, url_kwargs) }}</th>
+          <th scope="col">{{ sort_link('Kernel', 'kernel', current_sort, current_dir, 'group_detail', 'hosts-tbl', 'hosts-search', query_str, url_kwargs) }}</th>
+          <th scope="col">Virt</th>
+          <th scope="col">{{ sort_link('Memory', 'memtotal_mb', current_sort, current_dir, 'group_detail', 'hosts-tbl', 'hosts-search', query_str, url_kwargs) }}</th>
+          <th scope="col">{{ sort_link('vCPUs', 'vcpus', current_sort, current_dir, 'group_detail', 'hosts-tbl', 'hosts-search', query_str, url_kwargs) }}</th>
+          <th scope="col">{{ sort_link('Uptime', 'uptime_seconds', current_sort, current_dir, 'group_detail', 'hosts-tbl', 'hosts-search', query_str, url_kwargs) }}</th>
+          <th scope="col">{{ sort_link('Last seen', 'last_seen_at', current_sort, current_dir, 'group_detail', 'hosts-tbl', 'hosts-search', query_str, url_kwargs) }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% include "_group_hosts_rows.html" %}
+      </tbody>
+    </table>
+  </figure>
+  {% else %}
+  <p><em>{% if query_str %}No hosts match this query.{% else %}No hosts currently in this group.{% endif %}</em></p>
+  {% endif %}
+</section>
