@@ -9,7 +9,7 @@ preserved on disk as reference but no longer auto-wired.
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
-# Runtime version, read from the installed package metadata (poetry /
+# Runtime version, read from the installed package metadata (uv /
 # pip install). The release flow bumps `version` in pyproject.toml on
 # the release branch alongside the git tag. The sentinel covers a
 # source-tree-only checkout where `johnny` isn't installed; in that

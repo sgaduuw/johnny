@@ -70,7 +70,7 @@ class TestWebContextProcessor:
 
 class TestVersionFallback:
     """`johnny.__version__` reads from installed-package metadata.
-    A source-tree-only checkout (`poetry install` skipped, or
+    A source-tree-only checkout (`uv sync` skipped, or
     `johnny` excluded from the env) takes the PackageNotFoundError
     branch and surfaces `0.0.0+unknown` instead of crashing on
     import — the footer-version surface stays renderable."""
