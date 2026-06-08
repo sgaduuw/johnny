@@ -9,8 +9,8 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Reads pyproject.toml + uv.lock.
-  - package-ecosystem: "pip"
+  # Reads pyproject.toml + uv.lock together (uv ecosystem updates both).
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
