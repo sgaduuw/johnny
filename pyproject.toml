@@ -1,6 +1,6 @@
 [project]
 name = "johnny"
-version = "0.4.1"
+version = "0.4.2"
 description = "Ansible callback receiver and fleet-state browser"
 authors = [{name = "Eelco Wesemann", email = "6771014+sgaduuw@users.noreply.github.com"}]
 license = "MIT"
