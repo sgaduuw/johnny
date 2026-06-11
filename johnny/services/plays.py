@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import String, cast, or_, select, update
+from sqlalchemy import String, cast, delete, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.sql import Select
 
@@ -142,6 +142,27 @@ class PlayService:
                 Playbook.last_event_at < cutoff,
             )
             .values(status=PlaybookStatus.ABANDONED)
+        )
+        return self.session.execute(stmt).rowcount
+
+    def prune_abandoned(self, cutoff: datetime) -> int:
+        """Delete ABANDONED playbooks whose last_event_at predates
+        cutoff. Returns the rowcount of deleted playbooks.
+
+        Uses a bulk DELETE statement, which bypasses the ORM-side
+        cascade (`cascade="all, delete-orphan"` on `Playbook.hosts`
+        fires only on per-row `session.delete(obj)`). Dependent rows
+        (PlaybookHost, HostFactsHistory, Event) are removed by the
+        DB-level `ondelete="CASCADE"` FK constraint on each table's
+        `playbook_id` column. SQLite enforces this when
+        `PRAGMA foreign_keys=ON` is set, which the engine factory
+        applies on every connect.
+
+        Idempotent: re-running with the same cutoff finds zero
+        matches because the rows were already deleted."""
+        stmt = delete(Playbook).where(
+            Playbook.status == PlaybookStatus.ABANDONED,
+            Playbook.last_event_at < cutoff,
         )
         return self.session.execute(stmt).rowcount
 

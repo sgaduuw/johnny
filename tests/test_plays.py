@@ -11,10 +11,13 @@ from sqlalchemy.orm import Session
 
 from johnny.contracts.v1 import HostStatCounts, PlaybookFinish, PlaybookStart
 from johnny.persistence import (
+    Event,
     Host,
+    HostFactsHistory,
     Playbook,
     PlaybookHost,
     PlaybookStatus,
+    TaskStatus,
 )
 from johnny.services.plays import PlayService
 
@@ -385,3 +388,84 @@ class TestUpsertMembership:
         svc.upsert_membership(playbook.id, h1.id, "db1", ["dbservers"])
         svc.upsert_membership(playbook.id, h2.id, "db2", ["dbservers"])
         assert session.query(PlaybookHost).count() == 2
+
+
+class TestPruneAbandoned:
+    def test_prune_abandoned_cascades_children(self, session, playbook):
+        """Bulk DELETE on Playbook must trigger DB-level FK cascade so
+        PlaybookHost, HostFactsHistory, and Event rows all go with the
+        parent."""
+        playbook.status = PlaybookStatus.ABANDONED
+        playbook.last_event_at = datetime.now(timezone.utc) - timedelta(days=100)
+        host = Host(fqdn="host-a.example.com")
+        session.add(host)
+        session.flush()
+        # Capture id before the bulk DELETE expires the ORM object.
+        playbook_id = playbook.id
+        session.add_all([
+            PlaybookHost(
+                playbook_id=playbook_id,
+                host_id=host.id,
+                inventory_hostname="host-a",
+                groups=["all"],
+            ),
+            HostFactsHistory(
+                host_id=host.id,
+                captured_at=datetime.now(timezone.utc) - timedelta(days=100),
+                facts={"ansible_hostname": "host-a"},
+                playbook_id=playbook_id,
+            ),
+            Event(
+                event_uuid=uuid4(),
+                playbook_id=playbook_id,
+                host_id=host.id,
+                task_name="t",
+                task_action="ping",
+                status=TaskStatus.OK,
+                started_at=datetime.now(timezone.utc) - timedelta(days=100),
+                duration_ms=10,
+                stdout="",
+                stdout_truncated=False,
+                diff=None,
+                diff_truncated=False,
+            ),
+        ])
+        session.commit()
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+        deleted = PlayService(session).prune_abandoned(cutoff)
+        session.commit()
+
+        assert deleted == 1
+        assert session.query(Playbook).filter_by(id=playbook_id).count() == 0
+        assert session.query(PlaybookHost).filter_by(playbook_id=playbook_id).count() == 0
+        assert session.query(HostFactsHistory).filter_by(playbook_id=playbook_id).count() == 0
+        assert session.query(Event).filter_by(playbook_id=playbook_id).count() == 0
+
+    def test_prune_abandoned_leaves_other_statuses_alone(self, session):
+        """Only ABANDONED rows are pruned. Even ancient FINISHED stays."""
+        old = datetime.now(timezone.utc) - timedelta(days=200)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+
+        rows = [
+            _make_playbook(session, status=s, last_event_at=old)
+            for s in (
+                PlaybookStatus.RUNNING,
+                PlaybookStatus.FINISHED,
+                PlaybookStatus.FAILED,
+            )
+        ]
+
+        deleted = PlayService(session).prune_abandoned(cutoff)
+        assert deleted == 0
+        for pb in rows:
+            session.refresh(pb)  # still exists
+
+    def test_prune_abandoned_leaves_recent_abandoned_alone(self, session):
+        """ABANDONED + recent stays put."""
+        recent = datetime.now(timezone.utc) - timedelta(days=30)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+        _make_playbook(session, status=PlaybookStatus.ABANDONED, last_event_at=recent)
+
+        deleted = PlayService(session).prune_abandoned(cutoff)
+        assert deleted == 0
