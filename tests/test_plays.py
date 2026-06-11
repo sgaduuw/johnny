@@ -84,6 +84,28 @@ class TestStart:
         result = svc.start(retry)
         assert result.name == "original.yml"
 
+    def test_start_initializes_last_event_at(self, session: Session) -> None:
+        payload = _start_payload()
+        before = datetime.now(timezone.utc)
+        pb = PlayService(session).start(payload)
+        session.flush()
+        assert pb.last_event_at >= before
+        # And it's tz-aware UTC.
+        assert pb.last_event_at.tzinfo is not None
+
+    def test_duplicate_start_on_abandoned_revives(self, session: Session) -> None:
+        payload = _start_payload()
+        svc = PlayService(session)
+        pb = svc.start(payload)
+        pb.status = PlaybookStatus.ABANDONED
+        pb.last_event_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        session.flush()
+
+        svc.start(payload)  # second call with same id
+        session.refresh(pb)
+        assert pb.status == PlaybookStatus.RUNNING
+        assert pb.last_event_at > datetime.now(timezone.utc) - timedelta(minutes=1)
+
 
 class TestFinish:
     def test_sets_finished_at_and_stats(

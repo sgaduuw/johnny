@@ -42,11 +42,14 @@ class PlayService:
 
     def start(self, payload: PlaybookStart) -> Playbook:
         """Create the Playbook row in RUNNING state. Idempotent on id:
-        a re-POST with the same id returns the existing row unchanged
-        (first-write-wins, since a "play start" can't logically replay
-        with different metadata)."""
+        a re-POST with the same id ticks last_event_at (and revives
+        ABANDONED via touch()) and returns the existing row otherwise
+        unchanged. First-write-wins on the immutable start metadata,
+        since a play start can't logically replay with different name
+        / inventory / tags."""
         existing = self.session.get(Playbook, payload.id)
         if existing is not None:
+            self.touch(payload.id)
             return existing
         playbook = Playbook(
             id=payload.id,
@@ -58,6 +61,7 @@ class PlayService:
             tags=list(payload.tags),
             skip_tags=list(payload.skip_tags),
             check_mode=payload.check_mode,
+            last_event_at=datetime.now(timezone.utc),
         )
         self.session.add(playbook)
         self.session.flush()
