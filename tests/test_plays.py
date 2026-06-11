@@ -214,6 +214,34 @@ class TestFinish:
         assert pb.stats["h"]["ok"] == 2
         assert pb.status == PlaybookStatus.FAILED
 
+    def test_finish_stamps_last_event_at(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        playbook.last_event_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        session.flush()
+
+        payload = PlaybookFinish(
+            finished_at=datetime.now(timezone.utc),
+            stats={"host-a": _stat(ok=3)},
+        )
+        PlayService(session).finish(playbook.id, payload)
+        session.refresh(playbook)
+        assert playbook.last_event_at > datetime.now(timezone.utc) - timedelta(minutes=1)
+
+    def test_finish_on_abandoned_transitions_via_derived_status(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        playbook.status = PlaybookStatus.ABANDONED
+        session.flush()
+
+        payload = PlaybookFinish(
+            finished_at=datetime.now(timezone.utc),
+            stats={"host-a": _stat(failed=1)},
+        )
+        PlayService(session).finish(playbook.id, payload)
+        session.refresh(playbook)
+        assert playbook.status == PlaybookStatus.FAILED
+
 
 class TestTouch:
     def test_touch_stamps_last_event_at(

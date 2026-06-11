@@ -83,17 +83,21 @@ class PlayService:
         self.session.flush()
 
     def finish(self, playbook_id: UUID, payload: PlaybookFinish) -> Playbook:
-        """Set finished_at + status + stats. Status derived from stats:
-        FAILED if any host has failed>0 or unreachable>0, else FINISHED.
-        Last-write-wins on repeated calls (a corrected stats POST
-        supersedes an earlier one). Raises ValueError if the playbook
-        doesn't exist (route handler should turn that into 404)."""
+        """Set finished_at + status + stats + last_event_at. Status
+        derived from stats: FAILED if any host has failed>0 or
+        unreachable>0, else FINISHED. Unconditional assignment of
+        status correctly handles a late finish on an ABANDONED row
+        (ABANDONED -> FINISHED/FAILED). Last-write-wins on repeated
+        calls (a corrected stats POST supersedes an earlier one).
+        Raises ValueError if the playbook doesn't exist (route handler
+        turns that into 404)."""
         playbook = self.session.get(Playbook, playbook_id)
         if playbook is None:
             raise ValueError(f"playbook not found: {playbook_id}")
         playbook.finished_at = payload.finished_at
         playbook.stats = payload.model_dump()["stats"]
         playbook.status = _derive_status(payload.stats)
+        playbook.last_event_at = datetime.now(timezone.utc)
         self.session.flush()
         return playbook
 
