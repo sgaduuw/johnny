@@ -469,3 +469,34 @@ class TestPruneAbandoned:
 
         deleted = PlayService(session).prune_abandoned(cutoff)
         assert deleted == 0
+
+
+class TestFlipFlop:
+    def test_flip_flop_after_late_ingest(self, session, playbook):
+        """Demonstrates the chosen 'any ingest revives' semantics: a
+        Playbook can bounce between RUNNING and ABANDONED across multiple
+        stale-window / late-ingest cycles."""
+        svc = PlayService(session)
+        future_cutoff = datetime.now(timezone.utc) + timedelta(days=1)
+
+        # Start: RUNNING (default).
+        assert playbook.status == PlaybookStatus.RUNNING
+
+        # Sweeper runs; goes ABANDONED.
+        playbook.last_event_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        session.flush()
+        svc.mark_abandoned(future_cutoff)
+        session.refresh(playbook)
+        assert playbook.status == PlaybookStatus.ABANDONED
+
+        # Late ingest arrives; revives.
+        svc.touch(playbook.id)
+        session.refresh(playbook)
+        assert playbook.status == PlaybookStatus.RUNNING
+
+        # Goes silent again; sweeper re-abandons.
+        playbook.last_event_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        session.flush()
+        svc.mark_abandoned(future_cutoff)
+        session.refresh(playbook)
+        assert playbook.status == PlaybookStatus.ABANDONED
