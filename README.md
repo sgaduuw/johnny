@@ -27,9 +27,11 @@ controller.
   `/h/<fqdn>/` for the full `ansible_facts` dump and the history of
   fact snapshots.
 - **Playbooks**: every play johnny has received, with status
-  (running/finished/failed), duration, user, inventory, and tags.
-  Click through for the per-host roster and the per-task event
-  timeline.
+  (running/finished/failed/abandoned), duration, user, inventory, and
+  tags. ABANDONED is johnny's verdict for plays whose controller went
+  silent for longer than `JOHNNY_PLAYBOOK_STALE_AFTER_SECONDS`; any
+  subsequent ingest revives the row. Click through for the per-host
+  roster and the per-task event timeline.
 
 Read-only UI. All writes happen via the callback plugin POSTing to
 the api tier.
@@ -67,7 +69,7 @@ literal string rather than silently disappearing.
 
 ## Status
 
-v0.4.1 (2026-06-07). Pairs with
+v0.4.3 (2026-06-11). Pairs with
 [johnny-callback v0.2.1][cb-rel].
 
 [cb-rel]: https://galaxy.ansible.com/ui/repo/published/sgaduuw/johnny/
@@ -187,7 +189,7 @@ ingest.
 
 ```sh
 uv sync
-uv run pytest                                       # 269 tests, ~1s
+uv run pytest                                       # 294 tests, ~1s
 uv run ruff check johnny/ tests/
 uv run alembic upgrade head                         # apply schema
 uv run uvicorn 'johnny.api:create_app' --factory \
