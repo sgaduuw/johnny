@@ -19,6 +19,7 @@ from johnny.persistence import make_engine
 from johnny.services.events import EventService
 from johnny.services.groups import GroupService
 from johnny.services.hosts import HostService
+from johnny.services.plays import PlayService
 
 
 @click.group()
@@ -120,6 +121,28 @@ def dedupe_hosts(dry_run: bool) -> None:
                 f"{orphans_deleted} orphan hosts deleted; "
                 f"skipped: {skipped} groups"
             )
+
+
+@cli.command("mark-abandoned")
+def mark_abandoned() -> None:
+    """Mark RUNNING playbooks as ABANDONED if last_event_at is older
+    than JOHNNY_PLAYBOOK_STALE_AFTER_SECONDS (default 3600s).
+
+    One-shot. The johnny-tasks sidecar loops this on a bash interval;
+    invoke directly for manual sweeps.
+    """
+    settings = get_settings()
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.johnny_playbook_stale_after_seconds
+    )
+    engine = make_engine(settings.database_url)
+    with Session(engine) as session:
+        marked = PlayService(session).mark_abandoned(cutoff)
+        session.commit()
+    click.echo(
+        f"mark-abandoned: {marked} playbook(s) transitioned "
+        f"(cutoff: {cutoff.isoformat()})"
+    )
 
 
 @cli.command("groups-rebuild")
