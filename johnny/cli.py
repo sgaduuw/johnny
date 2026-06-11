@@ -35,17 +35,36 @@ def cli() -> None:
     type=click.IntRange(min=1),
     help="Delete fact-history rows and events strictly older than N days.",
 )
-def prune(older_than_days: int) -> None:
-    """Delete fact history and event rows older than --older-than-days."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+@click.option(
+    "--abandoned-older-than-days",
+    default=90,
+    show_default=True,
+    type=click.IntRange(min=1),
+    help=(
+        "Delete ABANDONED playbooks (and via FK cascade their roster + "
+        "remaining events/facts) strictly older than N days."
+    ),
+)
+def prune(older_than_days: int, abandoned_older_than_days: int) -> None:
+    """Delete fact history, event rows, and abandoned playbooks per the
+    two cutoff flags. The two cutoffs can disagree: pruning an
+    ABANDONED play cascades to its remaining rows even if the events
+    cutoff wouldn't have cleared them yet."""
+    now = datetime.now(timezone.utc)
+    events_cutoff = now - timedelta(days=older_than_days)
+    abandoned_cutoff = now - timedelta(days=abandoned_older_than_days)
     engine = make_engine(get_settings().database_url)
     with Session(engine) as session:
-        deleted_facts = HostService(session).prune_history(cutoff)
-        deleted_events = EventService(session).prune(cutoff)
+        deleted_facts = HostService(session).prune_history(events_cutoff)
+        deleted_events = EventService(session).prune(events_cutoff)
+        deleted_plays = PlayService(session).prune_abandoned(abandoned_cutoff)
         session.commit()
     click.echo(
         f"pruned: {deleted_facts} fact-history rows, "
-        f"{deleted_events} events (cutoff: {cutoff.isoformat()})"
+        f"{deleted_events} events, "
+        f"{deleted_plays} abandoned playbooks "
+        f"(events cutoff: {events_cutoff.isoformat()}, "
+        f"abandoned cutoff: {abandoned_cutoff.isoformat()})"
     )
 
 

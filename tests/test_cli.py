@@ -372,6 +372,26 @@ class TestGroupDescribe:
         assert "unknown group" in result.output
 
 
+class TestPruneAbandonedFlag:
+    def test_prune_accepts_abandoned_flag(
+        self,
+        engine: Engine,
+        session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from johnny.config import get_settings
+
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+
+        result = CliRunner().invoke(
+            cli, ["prune", "--abandoned-older-than-days", "60"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "0 abandoned playbooks" in result.output
+        assert "abandoned cutoff" in result.output
+
+
 class TestMarkAbandoned:
     def test_marks_stale_running_playbook(
         self,
