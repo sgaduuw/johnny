@@ -201,6 +201,76 @@ class TestIngestFacts:
         assert host.last_facts["ansible_default_ipv4"]["address"] == "10.0.0.2"
 
 
+class TestIngestLiveness:
+    """Verify that both ingest paths stamp last_event_at and revive ABANDONED."""
+
+    def test_ingest_facts_ticks_last_event_at(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        from datetime import timedelta
+
+        playbook.last_event_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        session.flush()
+
+        CallbackIngest(session).ingest_facts(
+            playbook.id,
+            _facts_batch(_record("host-a.example.com")),
+        )
+        session.refresh(playbook)
+        assert playbook.last_event_at > datetime.now(timezone.utc) - timedelta(
+            minutes=1
+        )
+
+    def test_ingest_facts_revives_abandoned(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        from datetime import timedelta
+
+        playbook.status = PlaybookStatus.ABANDONED
+        playbook.last_event_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        session.flush()
+
+        CallbackIngest(session).ingest_facts(
+            playbook.id,
+            _facts_batch(_record("host-a.example.com")),
+        )
+        session.refresh(playbook)
+        assert playbook.status == PlaybookStatus.RUNNING
+
+    def test_ingest_events_ticks_last_event_at(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        from datetime import timedelta
+
+        playbook.last_event_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        session.flush()
+
+        CallbackIngest(session).ingest_events(
+            playbook.id,
+            EventsBatch(events=[_event_payload()]),
+        )
+        session.refresh(playbook)
+        assert playbook.last_event_at > datetime.now(timezone.utc) - timedelta(
+            minutes=1
+        )
+
+    def test_ingest_events_revives_abandoned(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        from datetime import timedelta
+
+        playbook.status = PlaybookStatus.ABANDONED
+        playbook.last_event_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        session.flush()
+
+        CallbackIngest(session).ingest_events(
+            playbook.id,
+            EventsBatch(events=[_event_payload()]),
+        )
+        session.refresh(playbook)
+        assert playbook.status == PlaybookStatus.RUNNING
+
+
 class TestIngestEvents:
     def test_events_use_existing_hosts_from_facts_batch(
         self, session: Session
