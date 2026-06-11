@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # Read by johnny-web at request time via a context processor.
     johnny_truncate_chars: int = 15
 
+    # Threshold for the stale-RUNNING detector. A Playbook in RUNNING
+    # state whose last_event_at is older than this is transitioned to
+    # ABANDONED by the `johnny mark-abandoned` sweeper. Read by the
+    # tasks sidecar; web/api don't reference it.
+    johnny_playbook_stale_after_seconds: int = 3600
+
 
 @lru_cache
 def get_settings() -> Settings:

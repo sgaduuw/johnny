@@ -16,6 +16,8 @@ WEB_WORKERS="${WEB_WORKERS:-$(nproc)}"
 API_WORKERS="${API_WORKERS:-1}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
 PRUNE_INTERVAL_SECONDS="${PRUNE_INTERVAL_SECONDS:-86400}"
+MARK_ABANDONED_INTERVAL_SECONDS="${MARK_ABANDONED_INTERVAL_SECONDS:-900}"
+ABANDONED_PRUNE_DAYS="${ABANDONED_PRUNE_DAYS:-90}"
 SENTINEL="${MIGRATION_SENTINEL:-/data/.migrated}"
 
 case "${1:-}" in
@@ -51,12 +53,24 @@ case "${1:-}" in
       echo "tasks: first-start sentinel written to ${SENTINEL}"
     fi
 
-    # Periodic retention sweep. Plain loop is intentional — we explicitly
-    # rejected celery/APScheduler in v2 (see CONTEXT.md "Why no Celery").
-    echo "tasks: prune loop, every ${PRUNE_INTERVAL_SECONDS}s, retention ${RETENTION_DAYS}d"
+    # Backgrounded mark-abandoned loop. Capture its PID and trap
+    # SIGTERM/SIGINT to kill it explicitly so the container shuts
+    # down cleanly. PID capture (vs `kill %1`) keeps the trap robust
+    # if future loops get added before this one.
+    echo "tasks: mark-abandoned loop, every ${MARK_ABANDONED_INTERVAL_SECONDS}s"
+    (while true; do
+       johnny mark-abandoned || echo "tasks: mark-abandoned failed (continuing)"
+       sleep "${MARK_ABANDONED_INTERVAL_SECONDS}"
+     done) &
+    MARK_ABANDONED_PID=$!
+    trap 'kill "${MARK_ABANDONED_PID}" 2>/dev/null || true' SIGTERM SIGINT
+
+    echo "tasks: prune loop, every ${PRUNE_INTERVAL_SECONDS}s, retention ${RETENTION_DAYS}d, abandoned ${ABANDONED_PRUNE_DAYS}d"
     while true; do
-      johnny prune --older-than-days "${RETENTION_DAYS}" || \
-        echo "tasks: prune failed (continuing)"
+      johnny prune \
+          --older-than-days "${RETENTION_DAYS}" \
+          --abandoned-older-than-days "${ABANDONED_PRUNE_DAYS}" \
+          || echo "tasks: prune failed (continuing)"
       sleep "${PRUNE_INTERVAL_SECONDS}"
     done
     ;;

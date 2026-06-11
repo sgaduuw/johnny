@@ -12,6 +12,9 @@
   <h2>{{ play.name }}</h2>
   <p>
     <span class="play-status-{{ play.status.value }}">{{ play.status.value }}</span>
+    {%- if play.status.value == 'abandoned' %}
+      · <small class="play-status-abandoned">last heard from controller <span title="{{ play.last_event_at }}">{{ play.last_event_at | naturaltime }}</span></small>
+    {%- endif %}
     · started <span title="{{ play.started_at }}">{{ play.started_at | naturaltime }}</span>
     by <code>{{ play.user }}</code>
     {% if play.finished_at %}

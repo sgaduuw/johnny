@@ -370,3 +370,113 @@ class TestGroupDescribe:
         # underlying LookupError message on stderr.
         assert result.exit_code != 0
         assert "unknown group" in result.output
+
+
+class TestPruneAbandonedFlag:
+    def test_prune_accepts_abandoned_flag(
+        self,
+        engine: Engine,
+        session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from johnny.config import get_settings
+
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+
+        result = CliRunner().invoke(
+            cli, ["prune", "--abandoned-older-than-days", "60"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "0 abandoned playbooks" in result.output
+        assert "abandoned cutoff" in result.output
+
+
+class TestMarkAbandoned:
+    def test_marks_stale_running_playbook(
+        self,
+        engine: Engine,
+        session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datetime import timedelta
+
+        from johnny.config import get_settings
+        from johnny.persistence import Playbook, PlaybookStatus
+
+        # Seed a RUNNING playbook whose last_event_at is 2 hours ago
+        # (stale against the 1-hour threshold set below).
+        pb = Playbook(
+            id=uuid4(),
+            name="stuck",
+            inventory_sources=[],
+            started_at=datetime.now(timezone.utc),
+            user="u",
+            status=PlaybookStatus.RUNNING,
+            last_event_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+        session.add(pb)
+        session.commit()
+
+        monkeypatch.setenv("JOHNNY_PLAYBOOK_STALE_AFTER_SECONDS", "3600")
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+
+        result = CliRunner().invoke(cli, ["mark-abandoned"])
+        assert result.exit_code == 0, result.output
+        assert "1 playbook(s) transitioned" in result.output
+
+        session.expire_all()
+        rows = session.query(Playbook).all()
+        assert len(rows) == 1
+        assert rows[0].status == PlaybookStatus.ABANDONED
+
+    def test_leaves_recent_running_playbook(
+        self,
+        engine: Engine,
+        session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datetime import timedelta
+
+        from johnny.config import get_settings
+        from johnny.persistence import Playbook, PlaybookStatus
+
+        # A RUNNING playbook with last_event_at 30 minutes ago is not stale.
+        pb = Playbook(
+            id=uuid4(),
+            name="active",
+            inventory_sources=[],
+            started_at=datetime.now(timezone.utc),
+            user="u",
+            status=PlaybookStatus.RUNNING,
+            last_event_at=datetime.now(timezone.utc) - timedelta(minutes=30),
+        )
+        session.add(pb)
+        session.commit()
+
+        monkeypatch.setenv("JOHNNY_PLAYBOOK_STALE_AFTER_SECONDS", "3600")
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+
+        result = CliRunner().invoke(cli, ["mark-abandoned"])
+        assert result.exit_code == 0, result.output
+        assert "0 playbook(s) transitioned" in result.output
+
+        session.expire_all()
+        assert session.query(Playbook).one().status == PlaybookStatus.RUNNING
+
+    def test_no_op_on_empty_db(
+        self,
+        engine: Engine,
+        session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from johnny.config import get_settings
+
+        monkeypatch.setattr("johnny.cli.make_engine", lambda _url: engine)
+        get_settings.cache_clear()
+
+        result = CliRunner().invoke(cli, ["mark-abandoned"])
+        assert result.exit_code == 0, result.output
+        assert "0 playbook(s) transitioned" in result.output

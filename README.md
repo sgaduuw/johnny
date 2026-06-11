@@ -27,9 +27,11 @@ controller.
   `/h/<fqdn>/` for the full `ansible_facts` dump and the history of
   fact snapshots.
 - **Playbooks**: every play johnny has received, with status
-  (running/finished/failed), duration, user, inventory, and tags.
-  Click through for the per-host roster and the per-task event
-  timeline.
+  (running/finished/failed/abandoned), duration, user, inventory, and
+  tags. ABANDONED is johnny's verdict for plays whose controller went
+  silent for longer than `JOHNNY_PLAYBOOK_STALE_AFTER_SECONDS`; any
+  subsequent ingest revives the row. Click through for the per-host
+  roster and the per-task event timeline.
 
 Read-only UI. All writes happen via the callback plugin POSTing to
 the api tier.
@@ -67,7 +69,7 @@ literal string rather than silently disappearing.
 
 ## Status
 
-v0.4.1 (2026-06-07). Pairs with
+v0.4.3 (2026-06-11). Pairs with
 [johnny-callback v0.2.1][cb-rel].
 
 [cb-rel]: https://galaxy.ansible.com/ui/repo/published/sgaduuw/johnny/
@@ -162,6 +164,9 @@ Loaded from `.env` (gitignored) or shell environment.
 | `WEB_PORT`              | host (compose port)   | `8000`                        |
 | `API_PORT`              | host (compose port)   | `8001`                        |
 | `JOHNNY_TRUNCATE_CHARS` | `johnny-web`          | `15` (cell ellipsis budget)   |
+| `JOHNNY_PLAYBOOK_STALE_AFTER_SECONDS` | `johnny-tasks` | `3600` (sec until RUNNING → ABANDONED) |
+| `MARK_ABANDONED_INTERVAL_SECONDS` | `johnny-tasks` | `900` (sweeper cadence; not in `.env`) |
+| `ABANDONED_PRUNE_DAYS` | `johnny-tasks` | `90` (delete ABANDONED rows older than this; not in `.env`) |
 
 `johnny-api` returns 503 on every request if `JOHNNY_API_TOKEN` is
 unset — intentional fail-loud, never silently accepts unauthenticated
@@ -184,14 +189,16 @@ ingest.
 
 ```sh
 uv sync
-uv run pytest                                       # 269 tests, ~1s
+uv run pytest                                       # 294 tests, ~1s
 uv run ruff check johnny/ tests/
 uv run alembic upgrade head                         # apply schema
 uv run uvicorn 'johnny.api:create_app' --factory \
     --host 0.0.0.0 --port 8001                      # api tier
 uv run gunicorn -w 2 -b 0.0.0.0:8000 \
     'johnny.web:create_app()'                       # web tier
-uv run johnny prune --older-than-days 30            # CLI sweep
+uv run johnny prune --older-than-days 30 \
+    --abandoned-older-than-days 90              # CLI sweep
+uv run johnny mark-abandoned                        # mark stale RUNNING as ABANDONED
 uv run johnny groups-rebuild                        # backfill groups
 uv run johnny group describe webservers "..."       # set description
 uv run python scripts/seed_mock.py                  # demo fleet data

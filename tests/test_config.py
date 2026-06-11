@@ -97,6 +97,23 @@ class TestVersionFallback:
             importlib.reload(johnny)
 
 
+class TestPlaybookStaleAfterSecondsSetting:
+    def test_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("JOHNNY_PLAYBOOK_STALE_AFTER_SECONDS", raising=False)
+        s = Settings(_env_file=None)
+        assert s.johnny_playbook_stale_after_seconds == 3600
+
+    def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JOHNNY_PLAYBOOK_STALE_AFTER_SECONDS", "7200")
+        s = Settings(_env_file=None)
+        assert s.johnny_playbook_stale_after_seconds == 7200
+
+    def test_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("johnny_playbook_stale_after_seconds", "1800")
+        s = Settings(_env_file=None)
+        assert s.johnny_playbook_stale_after_seconds == 1800
+
+
 class TestDefaultEngineFactory:
     """When no explicit `engine_factory` is passed to `create_app`,
     the web app falls back to `_default_engine_factory` which reads
