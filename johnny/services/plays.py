@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import String, cast, or_, select
+from sqlalchemy import String, cast, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.sql import Select
 
@@ -125,6 +125,25 @@ class PlayService:
         self.session.flush()
         return membership
 
+
+    def mark_abandoned(self, cutoff: datetime) -> int:
+        """Set status = ABANDONED for all RUNNING playbooks with
+        last_event_at < cutoff. Returns the rowcount.
+
+        Single UPDATE statement; no Python-side iteration, no per-row
+        SELECT. Idempotent: a re-run finds zero matches. The sweeper
+        only scans RUNNING rows, so a row revived to RUNNING via late
+        ingest is eligible for re-abandonment on a subsequent stale
+        window."""
+        stmt = (
+            update(Playbook)
+            .where(
+                Playbook.status == PlaybookStatus.RUNNING,
+                Playbook.last_event_at < cutoff,
+            )
+            .values(status=PlaybookStatus.ABANDONED)
+        )
+        return self.session.execute(stmt).rowcount
 
     def list_recent(
         self,

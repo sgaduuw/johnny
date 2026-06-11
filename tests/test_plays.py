@@ -288,6 +288,61 @@ class TestTouch:
         PlayService(session).touch(uuid4())
 
 
+def _make_playbook(session, *, status=PlaybookStatus.RUNNING, last_event_at=None):
+    """Helper: build a Playbook with an explicit status + last_event_at."""
+    pb = Playbook(
+        id=uuid4(),
+        name="test-play",
+        inventory_sources=["inventory.yml"],
+        started_at=datetime.now(timezone.utc),
+        user="test-user",
+        status=status,
+        last_event_at=last_event_at or datetime.now(timezone.utc),
+    )
+    session.add(pb)
+    session.flush()
+    return pb
+
+
+class TestMarkAbandoned:
+    def test_mark_abandoned_transitions_only_stale_running(self, session):
+        now = datetime.now(timezone.utc)
+        stale = now - timedelta(hours=2)
+        cutoff = now - timedelta(hours=1)
+
+        # (status, last_event_at, expected_after)
+        matrix = [
+            (PlaybookStatus.RUNNING, stale, PlaybookStatus.ABANDONED),
+            (PlaybookStatus.RUNNING, now, PlaybookStatus.RUNNING),
+            (PlaybookStatus.FINISHED, stale, PlaybookStatus.FINISHED),
+            (PlaybookStatus.FAILED, stale, PlaybookStatus.FAILED),
+            (PlaybookStatus.ABANDONED, stale, PlaybookStatus.ABANDONED),
+        ]
+        rows = [
+            _make_playbook(session, status=s, last_event_at=ts)
+            for (s, ts, _) in matrix
+        ]
+
+        marked = PlayService(session).mark_abandoned(cutoff)
+        assert marked == 1  # only the RUNNING+stale row
+
+        for pb, (_, _, expected) in zip(rows, matrix):
+            session.refresh(pb)
+            assert pb.status == expected, (
+                f"row with {pb.last_event_at} expected {expected}, got {pb.status}"
+            )
+
+    def test_mark_abandoned_idempotent(self, session):
+        stale = datetime.now(timezone.utc) - timedelta(hours=2)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+        _make_playbook(session, status=PlaybookStatus.RUNNING, last_event_at=stale)
+
+        first = PlayService(session).mark_abandoned(cutoff)
+        second = PlayService(session).mark_abandoned(cutoff)
+        assert first == 1
+        assert second == 0
+
+
 class TestUpsertMembership:
     def test_creates_new_membership(
         self, session: Session, playbook: Playbook
