@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import String, cast, or_, select
@@ -61,6 +62,21 @@ class PlayService:
         self.session.add(playbook)
         self.session.flush()
         return playbook
+
+    def touch(self, playbook_id: UUID) -> None:
+        """Stamp last_event_at to server-receipt time. Revive
+        ABANDONED to RUNNING if applicable. Silent no-op on unknown
+        playbook_id (consistent with the facts/events ingest paths,
+        which let FK violations surface at commit rather than
+        pre-validating). FINISHED and FAILED are deliberate terminal
+        states; touch stamps liveness on them but does not revive."""
+        playbook = self.session.get(Playbook, playbook_id)
+        if playbook is None:
+            return
+        playbook.last_event_at = datetime.now(timezone.utc)
+        if playbook.status == PlaybookStatus.ABANDONED:
+            playbook.status = PlaybookStatus.RUNNING
+        self.session.flush()
 
     def finish(self, playbook_id: UUID, payload: PlaybookFinish) -> Playbook:
         """Set finished_at + status + stats. Status derived from stats:

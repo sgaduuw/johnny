@@ -193,6 +193,51 @@ class TestFinish:
         assert pb.status == PlaybookStatus.FAILED
 
 
+class TestTouch:
+    def test_touch_stamps_last_event_at(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        # Force last_event_at to a known old value so the assertion is
+        # robust against same-millisecond clock reads.
+        old = datetime.now(timezone.utc) - timedelta(hours=2)
+        playbook.last_event_at = old
+        session.flush()
+
+        PlayService(session).touch(playbook.id)
+        session.refresh(playbook)
+        assert playbook.last_event_at > old
+
+    def test_touch_revives_abandoned_to_running(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        playbook.status = PlaybookStatus.ABANDONED
+        session.flush()
+
+        PlayService(session).touch(playbook.id)
+        session.refresh(playbook)
+        assert playbook.status == PlaybookStatus.RUNNING
+
+    def test_touch_leaves_finished_status_alone(
+        self, session: Session, playbook: Playbook
+    ) -> None:
+        # touch stamps liveness on any status, but only revives ABANDONED.
+        # FINISHED and FAILED are terminal states set by the controller's
+        # explicit finish POST; a stray late ingest shouldn't undo them.
+        playbook.status = PlaybookStatus.FINISHED
+        session.flush()
+        before_stamp = playbook.last_event_at
+
+        PlayService(session).touch(playbook.id)
+        session.refresh(playbook)
+        assert playbook.status == PlaybookStatus.FINISHED
+        assert playbook.last_event_at >= before_stamp
+
+    def test_touch_silent_on_unknown_playbook(self, session: Session) -> None:
+        # No raise. Consistent with the facts/events ingest paths, which
+        # let FK violations surface at commit rather than pre-validating.
+        PlayService(session).touch(uuid4())
+
+
 class TestUpsertMembership:
     def test_creates_new_membership(
         self, session: Session, playbook: Playbook
