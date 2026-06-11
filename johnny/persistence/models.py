@@ -14,6 +14,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
+import sqlalchemy as sa
 from sqlalchemy import (
     Boolean,
     Computed,
@@ -44,6 +45,7 @@ class PlaybookStatus(StrEnum):
     RUNNING = "running"
     FINISHED = "finished"
     FAILED = "failed"
+    ABANDONED = "abandoned"
 
 
 class TaskStatus(StrEnum):
@@ -62,6 +64,17 @@ class Playbook(Base):
     inventory_sources: Mapped[list[str]] = mapped_column(JsonDict)
     started_at: Mapped[datetime] = mapped_column(UtcDateTime(), index=True)
     finished_at: Mapped[datetime | None] = mapped_column(UtcDateTime())
+    # Server-side receipt time of the most recent callback POST for
+    # this play (start/facts/events/finish). Drives the stale-RUNNING
+    # detector. server_default keeps alembic check happy on freshly-
+    # created schemas; PlayService.start() sets the value explicitly
+    # for new rows so the seed is server-receipt time, not the
+    # potentially-delayed payload.started_at.
+    last_event_at: Mapped[datetime] = mapped_column(
+        UtcDateTime(),
+        server_default=sa.text("CURRENT_TIMESTAMP"),
+        index=True,
+    )
     user: Mapped[str] = mapped_column(String(128))
     status: Mapped[PlaybookStatus] = mapped_column(
         Enum(PlaybookStatus, name="playbook_status"),
