@@ -43,9 +43,12 @@ class CallbackIngest:
         payload: FactsBatch,
     ) -> tuple[int, int]:
         """For each host in the batch: upsert facts (with history) and
-        upsert per-run roster membership. Returns (hosts_upserted, 0).
-        The second value is reserved for future idempotency semantics
-        on facts; currently no fact-level dedup is performed."""
+        upsert per-run roster membership. Also stamps the playbook's
+        last_event_at and revives ABANDONED -> RUNNING. Returns
+        (hosts_upserted, 0). The second value is reserved for future
+        idempotency semantics on facts; currently no fact-level dedup
+        is performed."""
+        self.plays.touch(playbook_id)
         upserted = 0
         for record in payload.hosts:
             host = self.hosts.upsert_from_record(
@@ -71,6 +74,7 @@ class CallbackIngest:
         playbook_id: UUID,
         payload: EventsBatch,
     ) -> tuple[int, int]:
+        self.plays.touch(playbook_id)
         return self.events.record_batch(playbook_id, payload.events)
 
     def finish_playbook(

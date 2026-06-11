@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import String, cast, or_, select
+from sqlalchemy import String, cast, delete, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.sql import Select
 
@@ -41,11 +42,14 @@ class PlayService:
 
     def start(self, payload: PlaybookStart) -> Playbook:
         """Create the Playbook row in RUNNING state. Idempotent on id:
-        a re-POST with the same id returns the existing row unchanged
-        (first-write-wins, since a "play start" can't logically replay
-        with different metadata)."""
+        a re-POST with the same id ticks last_event_at (and revives
+        ABANDONED via touch()) and returns the existing row otherwise
+        unchanged. First-write-wins on the immutable start metadata,
+        since a play start can't logically replay with different name
+        / inventory / tags."""
         existing = self.session.get(Playbook, payload.id)
         if existing is not None:
+            self.touch(payload.id)
             return existing
         playbook = Playbook(
             id=payload.id,
@@ -57,23 +61,43 @@ class PlayService:
             tags=list(payload.tags),
             skip_tags=list(payload.skip_tags),
             check_mode=payload.check_mode,
+            last_event_at=datetime.now(timezone.utc),
         )
         self.session.add(playbook)
         self.session.flush()
         return playbook
 
+    def touch(self, playbook_id: UUID) -> None:
+        """Stamp last_event_at to server-receipt time. Revive
+        ABANDONED to RUNNING if applicable. Silent no-op on unknown
+        playbook_id (consistent with the facts/events ingest paths,
+        which let FK violations surface at commit rather than
+        pre-validating). FINISHED and FAILED are deliberate terminal
+        states; touch stamps liveness on them but does not revive."""
+        playbook = self.session.get(Playbook, playbook_id)
+        if playbook is None:
+            return
+        playbook.last_event_at = datetime.now(timezone.utc)
+        if playbook.status == PlaybookStatus.ABANDONED:
+            playbook.status = PlaybookStatus.RUNNING
+        self.session.flush()
+
     def finish(self, playbook_id: UUID, payload: PlaybookFinish) -> Playbook:
-        """Set finished_at + status + stats. Status derived from stats:
-        FAILED if any host has failed>0 or unreachable>0, else FINISHED.
-        Last-write-wins on repeated calls (a corrected stats POST
-        supersedes an earlier one). Raises ValueError if the playbook
-        doesn't exist (route handler should turn that into 404)."""
+        """Set finished_at + status + stats + last_event_at. Status
+        derived from stats: FAILED if any host has failed>0 or
+        unreachable>0, else FINISHED. Unconditional assignment of
+        status correctly handles a late finish on an ABANDONED row
+        (ABANDONED -> FINISHED/FAILED). Last-write-wins on repeated
+        calls (a corrected stats POST supersedes an earlier one).
+        Raises ValueError if the playbook doesn't exist (route handler
+        turns that into 404)."""
         playbook = self.session.get(Playbook, playbook_id)
         if playbook is None:
             raise ValueError(f"playbook not found: {playbook_id}")
         playbook.finished_at = payload.finished_at
         playbook.stats = payload.model_dump()["stats"]
         playbook.status = _derive_status(payload.stats)
+        playbook.last_event_at = datetime.now(timezone.utc)
         self.session.flush()
         return playbook
 
@@ -101,6 +125,46 @@ class PlayService:
         self.session.flush()
         return membership
 
+
+    def mark_abandoned(self, cutoff: datetime) -> int:
+        """Set status = ABANDONED for all RUNNING playbooks with
+        last_event_at < cutoff. Returns the rowcount.
+
+        Single UPDATE statement; no Python-side iteration, no per-row
+        SELECT. Idempotent: a re-run finds zero matches. The sweeper
+        only scans RUNNING rows, so a row revived to RUNNING via late
+        ingest is eligible for re-abandonment on a subsequent stale
+        window."""
+        stmt = (
+            update(Playbook)
+            .where(
+                Playbook.status == PlaybookStatus.RUNNING,
+                Playbook.last_event_at < cutoff,
+            )
+            .values(status=PlaybookStatus.ABANDONED)
+        )
+        return self.session.execute(stmt).rowcount
+
+    def prune_abandoned(self, cutoff: datetime) -> int:
+        """Delete ABANDONED playbooks whose last_event_at predates
+        cutoff. Returns the rowcount of deleted playbooks.
+
+        Uses a bulk DELETE statement, which bypasses the ORM-side
+        cascade (`cascade="all, delete-orphan"` on `Playbook.hosts`
+        fires only on per-row `session.delete(obj)`). Dependent rows
+        (PlaybookHost, HostFactsHistory, Event) are removed by the
+        DB-level `ondelete="CASCADE"` FK constraint on each table's
+        `playbook_id` column. SQLite enforces this when
+        `PRAGMA foreign_keys=ON` is set, which the engine factory
+        applies on every connect.
+
+        Idempotent: re-running with the same cutoff finds zero
+        matches because the rows were already deleted."""
+        stmt = delete(Playbook).where(
+            Playbook.status == PlaybookStatus.ABANDONED,
+            Playbook.last_event_at < cutoff,
+        )
+        return self.session.execute(stmt).rowcount
 
     def list_recent(
         self,
