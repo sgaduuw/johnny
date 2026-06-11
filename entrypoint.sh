@@ -53,15 +53,17 @@ case "${1:-}" in
       echo "tasks: first-start sentinel written to ${SENTINEL}"
     fi
 
-    # Backgrounded mark-abandoned loop. Trap kills it on SIGTERM/
-    # SIGINT so the container shuts down cleanly; otherwise the bash
-    # main exits but the subshell would stay.
-    trap 'kill %1 2>/dev/null || true' SIGTERM SIGINT
+    # Backgrounded mark-abandoned loop. Capture its PID and trap
+    # SIGTERM/SIGINT to kill it explicitly so the container shuts
+    # down cleanly. PID capture (vs `kill %1`) keeps the trap robust
+    # if future loops get added before this one.
     echo "tasks: mark-abandoned loop, every ${MARK_ABANDONED_INTERVAL_SECONDS}s"
     (while true; do
        johnny mark-abandoned || echo "tasks: mark-abandoned failed (continuing)"
        sleep "${MARK_ABANDONED_INTERVAL_SECONDS}"
      done) &
+    MARK_ABANDONED_PID=$!
+    trap 'kill "${MARK_ABANDONED_PID}" 2>/dev/null || true' SIGTERM SIGINT
 
     echo "tasks: prune loop, every ${PRUNE_INTERVAL_SECONDS}s, retention ${RETENTION_DAYS}d, abandoned ${ABANDONED_PRUNE_DAYS}d"
     while true; do
