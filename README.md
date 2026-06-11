@@ -161,7 +161,10 @@ Loaded from `.env` (gitignored) or shell environment.
 | `PRUNE_INTERVAL_SECONDS`| `johnny-tasks`        | `86400` (24 h)                |
 | `WEB_PORT`              | host (compose port)   | `8000`                        |
 | `API_PORT`              | host (compose port)   | `8001`                        |
-| `JOHNNY_TRUNCATE_CHARS` | `johnny-web`          | `15` (cell ellipsis budget)   |
+| `JOHNNY_TRUNCATE_CHARS`               | `johnny-web`          | `15` (cell ellipsis budget)                                                                                                                            |
+| `JOHNNY_PLAYBOOK_STALE_AFTER_SECONDS` | `johnny-tasks`        | `3600`. After this many seconds with no callback signal, a RUNNING playbook is marked ABANDONED by the sweeper.                                        |
+| `MARK_ABANDONED_INTERVAL_SECONDS`     | `johnny-tasks`        | `900`. How often the tasks sidecar runs `johnny mark-abandoned`. Container-level env var (not in `.env`).                                              |
+| `ABANDONED_PRUNE_DAYS`                | `johnny-tasks`        | `90`. How old an ABANDONED playbook must be before `johnny prune` deletes it (cascading via FK). Container-level env var (not in `.env`).              |
 
 `johnny-api` returns 503 on every request if `JOHNNY_API_TOKEN` is
 unset — intentional fail-loud, never silently accepts unauthenticated
@@ -191,7 +194,9 @@ uv run uvicorn 'johnny.api:create_app' --factory \
     --host 0.0.0.0 --port 8001                      # api tier
 uv run gunicorn -w 2 -b 0.0.0.0:8000 \
     'johnny.web:create_app()'                       # web tier
-uv run johnny prune --older-than-days 30            # CLI sweep
+uv run johnny prune --older-than-days 30 \
+    --abandoned-older-than-days 90              # CLI sweep
+uv run johnny mark-abandoned                        # mark stale RUNNING as ABANDONED
 uv run johnny groups-rebuild                        # backfill groups
 uv run johnny group describe webservers "..."       # set description
 uv run python scripts/seed_mock.py                  # demo fleet data
