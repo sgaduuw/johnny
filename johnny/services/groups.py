@@ -314,6 +314,67 @@ class GroupService:
         has_more = len(rows) > page_size
         return rows[:page_size], has_more
 
+    def ancestry_levels(self, group: Group) -> list[list[Group]]:
+        """Transitive parents of `group`, bucketed by their longest-path
+        distance from it, nearest level first; name-sorted per level.
+
+        Longest-path placement is what merges reconverging ancestors:
+        `all` is canonically both a direct parent and a grandparent,
+        and lands once at its deepest level instead of at every depth
+        it is reachable at. The path guard keeps the walk terminating
+        even if a cycle ever slipped past the writer.
+        """
+        rows = self.session.execute(
+            select(GroupParent.child_id, GroupParent.parent_id)
+        ).all()
+        parents_of: dict[int, set[int]] = {}
+        for child_id, parent_id in rows:
+            parents_of.setdefault(child_id, set()).add(parent_id)
+
+        depth: dict[int, int] = {}
+
+        def relax(node_id: int, d: int, path: frozenset[int]) -> None:
+            # Skipping non-improving visits is safe: an equal-or-deeper
+            # earlier visit already relaxed this node's ancestors at
+            # least as far.
+            for pid in parents_of.get(node_id, ()):
+                if pid in path:
+                    continue
+                if d + 1 > depth.get(pid, 0):
+                    depth[pid] = d + 1
+                    relax(pid, d + 1, path | {pid})
+
+        relax(group.id, 0, frozenset({group.id}))
+        if not depth:
+            return []
+
+        by_id = {
+            g.id: g
+            for g in self.session.scalars(
+                select(Group).where(Group.id.in_(depth.keys()))
+            )
+        }
+        levels: list[list[Group]] = []
+        for d in range(1, max(depth.values()) + 1):
+            level = sorted(
+                (by_id[gid] for gid, gd in depth.items() if gd == d),
+                key=lambda grp: grp.name,
+            )
+            if level:
+                levels.append(level)
+        return levels
+
+    def children_of(self, group: Group) -> list[Group]:
+        """Direct child groups (one hop down the nesting), name-sorted."""
+        return list(
+            self.session.scalars(
+                select(Group)
+                .join(GroupParent, GroupParent.child_id == Group.id)
+                .where(GroupParent.parent_id == group.id)
+                .order_by(Group.name)
+            )
+        )
+
     def set_description(self, name: str, description: str | None) -> Group:
         """Set or clear a group's free-text description. Raises
         LookupError if no group with that name exists; create the

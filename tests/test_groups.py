@@ -415,3 +415,82 @@ class TestUpsertTopology:
             (self._gid(session, "c"), self._gid(session, "b")),
         }
         assert any("cycle" in r.message for r in caplog.records)
+
+
+class TestHierarchyReads:
+    def _names(self, levels: list[list[Group]]) -> list[list[str]]:
+        return [[g.name for g in level] for level in levels]
+
+    def test_ancestry_pure_chain(self, session: Session) -> None:
+        svc = GroupService(session)
+        t0 = datetime.now(timezone.utc)
+        svc.upsert_topology({"all": ["linux"], "linux": ["webservers"]}, t0)
+        levels = svc.ancestry_levels(svc.get_by_name("webservers"))
+        assert self._names(levels) == [["linux"], ["all"]]
+
+    def test_ancestry_diamond_merges_to_deepest_level(
+        self, session: Session
+    ) -> None:
+        """`all` is both a direct parent and a grandparent of web;
+        longest-path placement lands it once, at the deepest level."""
+        svc = GroupService(session)
+        t0 = datetime.now(timezone.utc)
+        svc.upsert_topology(
+            {"all": ["linux", "web"], "linux": ["web"]}, t0
+        )
+        levels = svc.ancestry_levels(svc.get_by_name("web"))
+        assert self._names(levels) == [["linux"], ["all"]]
+
+    def test_ancestry_fork_yields_multi_group_level(
+        self, session: Session
+    ) -> None:
+        svc = GroupService(session)
+        t0 = datetime.now(timezone.utc)
+        svc.upsert_topology(
+            {"debian": ["app"], "redhat": ["app"], "linux": ["debian", "redhat"]},
+            t0,
+        )
+        levels = svc.ancestry_levels(svc.get_by_name("app"))
+        assert self._names(levels) == [["debian", "redhat"], ["linux"]]
+
+    def test_ancestry_empty_for_root(self, session: Session) -> None:
+        svc = GroupService(session)
+        svc.upsert_topology({"all": ["linux"]}, datetime.now(timezone.utc))
+        assert svc.ancestry_levels(svc.get_by_name("all")) == []
+
+    def test_ancestry_deep_repropagation_to_deepest_level(
+        self, session: Session
+    ) -> None:
+        """`n` (and its own parent `m`) is reachable from the focus by a
+        short 2-hop path and a long 4-hop path. Both must land at their
+        deepest level: the depth bump on `n` has to re-propagate up to
+        `m`. This pins the relax prune that the diamond case (depth 1
+        vs 2) does not exercise.
+
+        Edges run child -> parent, so payload values are the focus side.
+        Topology: focus -> {x, a}; x -> n; a -> b -> c -> n; n -> m.
+        Longest depths from focus: a,x=1; b=2; c=3; n=4 (via a,b,c, not
+        via x); m=5.
+        """
+        svc = GroupService(session)
+        svc.upsert_topology(
+            {
+                "x": ["focus"],
+                "a": ["focus"],
+                "n": ["x", "c"],
+                "b": ["a"],
+                "c": ["b"],
+                "m": ["n"],
+            },
+            datetime.now(timezone.utc),
+        )
+        levels = svc.ancestry_levels(svc.get_by_name("focus"))
+        assert self._names(levels) == [["a", "x"], ["b"], ["c"], ["n"], ["m"]]
+
+    def test_children_of_sorted_by_name(self, session: Session) -> None:
+        svc = GroupService(session)
+        svc.upsert_topology(
+            {"linux": ["redhat", "debian"]}, datetime.now(timezone.utc)
+        )
+        children = svc.children_of(svc.get_by_name("linux"))
+        assert [g.name for g in children] == ["debian", "redhat"]
