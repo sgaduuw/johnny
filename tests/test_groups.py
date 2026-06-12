@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from johnny.persistence.models import (
     Group,
+    GroupParent,
     Host,
     HostGroup,
     Playbook,
@@ -293,3 +294,124 @@ class TestRebuildFromHistory:
 
         svc.rebuild_from_history()
         assert svc.get_by_name("webservers").description == "kept across rebuild"
+
+
+class TestUpsertTopology:
+    def _edges(self, session: Session) -> set[tuple[int, int]]:
+        return {
+            (e.child_id, e.parent_id)
+            for e in session.query(GroupParent).all()
+        }
+
+    def _gid(self, session: Session, name: str) -> int:
+        return GroupService(session).get_by_name(name).id
+
+    def test_edge_direction_and_parent_only_group_creation(
+        self, session: Session
+    ) -> None:
+        svc = GroupService(session)
+        t0 = datetime.now(timezone.utc)
+        svc.upsert_topology({"linux": ["debian"]}, t0)
+        assert self._edges(session) == {
+            (self._gid(session, "debian"), self._gid(session, "linux"))
+        }
+
+    def test_empty_payload_is_noop(self, session: Session) -> None:
+        GroupService(session).upsert_topology({}, datetime.now(timezone.utc))
+        assert session.query(Group).count() == 0
+
+    def test_latest_run_wins_prunes_dropped_child(
+        self, session: Session
+    ) -> None:
+        svc = GroupService(session)
+        t0 = datetime.now(timezone.utc)
+        svc.upsert_topology({"linux": ["debian", "redhat"]}, t0)
+        svc.upsert_topology({"linux": ["debian"]}, t0 + timedelta(hours=1))
+        assert self._edges(session) == {
+            (self._gid(session, "debian"), self._gid(session, "linux"))
+        }
+        assert svc.get_by_name("redhat") is not None
+
+    def test_empty_list_prunes_all_children(self, session: Session) -> None:
+        svc = GroupService(session)
+        t0 = datetime.now(timezone.utc)
+        svc.upsert_topology({"linux": ["debian"]}, t0)
+        svc.upsert_topology({"linux": []}, t0 + timedelta(hours=1))
+        assert self._edges(session) == set()
+        assert svc.get_by_name("linux") is not None
+        assert svc.get_by_name("debian") is not None
+
+    def test_empty_list_unknown_parent_creates_nothing(
+        self, session: Session
+    ) -> None:
+        svc = GroupService(session)
+        svc.upsert_topology({"ghost": []}, datetime.now(timezone.utc))
+        assert svc.get_by_name("ghost") is None
+
+    def test_cross_parent_isolation(self, session: Session) -> None:
+        svc = GroupService(session)
+        t0 = datetime.now(timezone.utc)
+        svc.upsert_topology({"linux": ["debian"]}, t0)
+        svc.upsert_topology({"webservers": ["nginx"]}, t0 + timedelta(hours=1))
+        assert self._edges(session) == {
+            (self._gid(session, "debian"), self._gid(session, "linux")),
+            (self._gid(session, "nginx"), self._gid(session, "webservers")),
+        }
+
+    def test_stale_run_guard_skips_only_stale_parents(
+        self, session: Session
+    ) -> None:
+        svc = GroupService(session)
+        t0 = datetime.now(timezone.utc)
+        t1 = t0 + timedelta(hours=1)
+        svc.upsert_topology({"linux": ["debian"]}, t1)
+        svc.upsert_topology({"linux": ["redhat"], "web": ["nginx"]}, t0)
+        assert self._edges(session) == {
+            (self._gid(session, "debian"), self._gid(session, "linux")),
+            (self._gid(session, "nginx"), self._gid(session, "web")),
+        }
+        assert svc.get_by_name("redhat") is None
+
+    def test_reparent_inversion_in_one_payload(
+        self, session: Session
+    ) -> None:
+        svc = GroupService(session)
+        t0 = datetime.now(timezone.utc)
+        svc.upsert_topology({"linux": ["debian"]}, t0)
+        svc.upsert_topology(
+            {"linux": [], "debian": ["linux"]}, t0 + timedelta(hours=1)
+        )
+        assert self._edges(session) == {
+            (self._gid(session, "linux"), self._gid(session, "debian"))
+        }
+
+    def test_genuine_cycle_skips_offending_edge_and_warns(
+        self, session: Session, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        svc = GroupService(session)
+        with caplog.at_level("WARNING", logger="johnny.services.groups"):
+            svc.upsert_topology(
+                {"a": ["b"], "b": ["a"]}, datetime.now(timezone.utc)
+            )
+        assert self._edges(session) == {
+            (self._gid(session, "b"), self._gid(session, "a"))
+        }
+        assert any("cycle" in r.message for r in caplog.records)
+
+    def test_three_node_cycle_in_one_payload_skips_back_edge(
+        self, session: Session, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A cycle formed by three edges in a single payload must be
+        caught by the in-loop graph mutation: a -> b -> c accepted,
+        then c -> a closes the loop and is the one edge dropped."""
+        svc = GroupService(session)
+        with caplog.at_level("WARNING", logger="johnny.services.groups"):
+            svc.upsert_topology(
+                {"a": ["b"], "b": ["c"], "c": ["a"]},
+                datetime.now(timezone.utc),
+            )
+        assert self._edges(session) == {
+            (self._gid(session, "b"), self._gid(session, "a")),
+            (self._gid(session, "c"), self._gid(session, "b")),
+        }
+        assert any("cycle" in r.message for r in caplog.records)
