@@ -73,8 +73,9 @@ literal string rather than silently disappearing.
 
 ## Status
 
-v0.4.3 (2026-06-11). Pairs with
-[johnny-callback v0.2.1][cb-rel].
+v0.5.0 (2026-06-13). Accepts inventory group topology from
+[johnny-callback >= 0.3.0][cb-rel] to populate group hierarchy
+(older callbacks remain supported; they just send no topology).
 
 [cb-rel]: https://galaxy.ansible.com/ui/repo/published/sgaduuw/johnny/
 
@@ -193,7 +194,7 @@ ingest.
 
 ```sh
 uv sync
-uv run pytest                                       # 294 tests, ~1s
+uv run pytest                                       # 315 tests, ~2s
 uv run ruff check johnny/ tests/
 uv run alembic upgrade head                         # apply schema
 uv run uvicorn 'johnny.api:create_app' --factory \
