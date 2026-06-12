@@ -36,6 +36,9 @@ class CallbackIngest:
 
     def start_playbook(self, payload: PlaybookStart) -> None:
         self.plays.start(payload)
+        # started_at (not receipt time) is the reconcile timestamp so
+        # the stale-run guard in upsert_topology can order runs.
+        self.groups.upsert_topology(payload.groups_topology, payload.started_at)
 
     def ingest_facts(
         self,

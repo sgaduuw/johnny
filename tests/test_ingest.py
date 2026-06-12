@@ -28,6 +28,7 @@ from johnny.contracts.v1 import (
 )
 from johnny.persistence import (
     Event,
+    GroupParent,
     Host,
     HostFactsHistory,
     Playbook,
@@ -329,3 +330,19 @@ class TestFinishPlaybook:
         assert pb is not None
         assert pb.status == PlaybookStatus.FINISHED
         assert pb.finished_at == finished
+
+
+class TestStartPlaybookTopology:
+    def test_start_playbook_ingests_topology(self, session: Session) -> None:
+        ingest = CallbackIngest(session)
+        start = PlaybookStart(
+            id=uuid4(),
+            name="deploy.yml",
+            inventory_sources=["inventory.yml"],
+            started_at=datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc),
+            user="ansible",
+            groups_topology={"linux": ["debian"]},
+        )
+        ingest.start_playbook(start)
+        edges = session.query(GroupParent).all()
+        assert len(edges) == 1

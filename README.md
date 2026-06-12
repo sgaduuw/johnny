@@ -20,7 +20,11 @@ controller.
   observed across your fleet, each card showing the group's name,
   current member count, and an optional operator-set description.
   `all` is pinned first; the rest follow alphabetically. Click a
-  card to drill into the group's hosts at `/g/<group>/`.
+  card to drill into the group's hosts at `/g/<group>/`. When the
+  callback plugin reports inventory topology (callback >= 0.3.0
+  against server >= 0.5.0), the detail page also shows the group's
+  ancestry chain (e.g. `webservers ⊂ linux ⊂ all`) and its direct
+  child groups.
 - **Hosts**: every host that's ever been touched by a play, with
   IPv4, OS, kernel, virt role/type, memory, vCPUs, uptime
   (snapshot), and how long ago you last saw it. Click through to

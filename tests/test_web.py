@@ -931,6 +931,42 @@ class TestLoadMorePagination:
         assert "play-002.yml" in body
 
 
+class TestGroupHierarchyRendering:
+    def test_chain_and_children_render(
+        self, client: FlaskClient, engine: Engine
+    ) -> None:
+        from johnny.services.groups import GroupService
+
+        with Session(engine) as session:
+            svc = GroupService(session)
+            svc.upsert_topology(
+                {"all": ["linux"], "linux": ["webservers"]},
+                datetime(2026, 6, 12, 12, 0, tzinfo=timezone.utc),
+            )
+            session.commit()
+        r = client.get("/g/linux/")
+        assert r.status_code == 200
+        body = r.get_data(as_text=True)
+        assert 'href="/g/all/"' in body          # ancestry link
+        assert 'href="/g/webservers/"' in body   # child link
+        assert "⊂" in body
+
+    def test_no_hierarchy_renders_clean(
+        self, client: FlaskClient, engine: Engine
+    ) -> None:
+        from johnny.services.groups import GroupService
+
+        with Session(engine) as session:
+            GroupService(session).upsert_topology(
+                {"all": ["lonely"]},
+                datetime(2026, 6, 12, 12, 0, tzinfo=timezone.utc),
+            )
+            session.commit()
+        r = client.get("/g/all/")
+        assert r.status_code == 200
+        assert "⊂" not in r.get_data(as_text=True)  # root has no ancestors
+
+
 class TestFooterVersion:
     def test_footer_shows_johnny_version(self, client: FlaskClient) -> None:
         from johnny import __version__

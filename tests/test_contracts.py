@@ -242,6 +242,26 @@ class TestRoundTrips:
             PlaybookStart.model_validate(body)
 
 
+class TestGroupsTopologyCompat:
+    """Wire-compat span for the groups_topology field (added 0.5.0).
+
+    Old plugins (pre-callback-0.3.0) send no groups_topology key; the
+    default must apply at the wire boundary for the entire window
+    during which old plugins coexist with the new server.
+    """
+
+    def test_defaults_empty_for_old_plugin_payloads(self) -> None:
+        pb = PlaybookStart.model_validate(_valid_payloads()[PlaybookStart])
+        assert pb.groups_topology == {}
+
+    def test_new_shape_roundtrips(self) -> None:
+        body = _valid_payloads()[PlaybookStart] | {
+            "groups_topology": {"linux": ["debian"], "debian": []}
+        }
+        pb = PlaybookStart.model_validate(body)
+        assert pb.groups_topology == {"linux": ["debian"], "debian": []}
+
+
 class TestTaskEventDefaults:
     """Defaults that older plugin versions rely on under extra='forbid'.
     The diff_truncated default is also tested at the service layer

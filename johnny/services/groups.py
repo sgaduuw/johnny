@@ -9,6 +9,7 @@ read tier queries against. See CONTEXT.md "Groups model".
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from uuid import UUID
 
@@ -18,12 +19,17 @@ from sqlalchemy.sql import Select
 
 from johnny.persistence.models import (
     Group,
+    GroupParent,
     Host,
     HostGroup,
     Playbook,
     PlaybookHost,
 )
 from johnny.web._search import SearchQuery
+
+# First logger in the services package. Stdlib logging with no
+# config here: the app's root config owns handlers and levels.
+log = logging.getLogger(__name__)
 
 # Hosts table on group_detail.
 HOST_SORT_COLUMNS = {
@@ -115,6 +121,138 @@ class GroupService:
 
         self.session.flush()
 
+    def upsert_topology(
+        self, topology: dict[str, list[str]], seen_at: datetime
+    ) -> None:
+        """Reconcile group_parents from plugin-reported inventory
+        topology (parent name -> direct child names; an empty list
+        means "this parent currently nests nothing" and prunes).
+
+        Latest-run-wins scoped per parent key: parents absent from the
+        payload keep their edges, so controllers reporting disjoint
+        inventories never clobber each other. See the 2026-06-12
+        design spec for the full semantics and ordering rationale.
+        """
+        if not topology:
+            return
+
+        # Stale-run guard: "latest run" means latest started_at, not
+        # latest-arriving. A delayed retry of an older PlaybookStart
+        # must not clobber topology a newer run already reconciled.
+        fresh: dict[str, list[str]] = {}
+        for parent_name, children in topology.items():
+            parent = self.get_by_name(parent_name)
+            if parent is not None:
+                existing = self.session.scalars(
+                    select(GroupParent).where(
+                        GroupParent.parent_id == parent.id
+                    )
+                )
+                if any(e.last_seen_at > seen_at for e in existing):
+                    log.info(
+                        "stale topology for parent %r ignored "
+                        "(run predates recorded edges)",
+                        parent_name,
+                    )
+                    continue
+            fresh[parent_name] = children
+        if not fresh:
+            return
+
+        # Upsert a Group row for every edge participant. A parent
+        # reported with an empty child list creates nothing: it only
+        # prunes, and landing an empty group row helps nobody.
+        names = {p for p, kids in fresh.items() if kids}
+        for kids in fresh.values():
+            names.update(kids)
+        name_to_group: dict[str, Group] = {}
+        for name in names:
+            group = self.get_by_name(name)
+            if group is None:
+                group = Group(
+                    name=name, first_seen_at=seen_at, last_seen_at=seen_at
+                )
+                self.session.add(group)
+                self.session.flush()
+            elif seen_at > group.last_seen_at:
+                group.last_seen_at = seen_at
+            name_to_group[name] = group
+
+        # Payload parents that exist as rows. Empty-children parents
+        # only matter when they already exist (prune-only).
+        parent_ids: dict[str, int] = {}
+        for parent_name in fresh:
+            group = name_to_group.get(parent_name) or self.get_by_name(
+                parent_name
+            )
+            if group is not None:
+                parent_ids[parent_name] = group.id
+        payload_pids = set(parent_ids.values())
+
+        # Cycle guard over a working set with this run's deletions
+        # already applied: an inventory that inverts a nesting carries
+        # the removal and the addition in one payload, and checking the
+        # addition against pre-deletion rows would falsely flag it.
+        # Edges run child -> parent.
+        all_edges = list(self.session.scalars(select(GroupParent)))
+        graph: dict[int, set[int]] = {}
+        for edge in all_edges:
+            if edge.parent_id in payload_pids:
+                continue  # about to be reconciled; not part of the base set
+            graph.setdefault(edge.child_id, set()).add(edge.parent_id)
+
+        def reaches(start: int, target: int) -> bool:
+            stack, seen = [start], set()
+            while stack:
+                node = stack.pop()
+                if node == target:
+                    return True
+                if node in seen:
+                    continue
+                seen.add(node)
+                stack.extend(graph.get(node, ()))
+            return False
+
+        surviving: dict[int, set[int]] = {pid: set() for pid in payload_pids}
+        for parent_name, children in fresh.items():
+            pid = parent_ids.get(parent_name)
+            if pid is None:
+                continue
+            for child_name in children:
+                cid = name_to_group[child_name].id
+                if cid == pid or reaches(pid, cid):
+                    log.warning(
+                        "topology edge %r under %r skipped: "
+                        "would close a cycle",
+                        child_name,
+                        parent_name,
+                    )
+                    continue
+                graph.setdefault(cid, set()).add(pid)
+                surviving[pid].add(cid)
+
+        # Latest-run-wins per parent: reconcile each payload parent's
+        # edge set to exactly the surviving children.
+        current = {
+            (e.child_id, e.parent_id): e
+            for e in all_edges
+            if e.parent_id in payload_pids
+        }
+        for pid, child_ids in surviving.items():
+            for cid in child_ids:
+                edge = current.pop((cid, pid), None)
+                if edge is None:
+                    self.session.add(
+                        GroupParent(
+                            child_id=cid, parent_id=pid, last_seen_at=seen_at
+                        )
+                    )
+                else:
+                    edge.last_seen_at = seen_at
+        for edge in current.values():
+            self.session.delete(edge)
+        self.session.flush()
+
     def list_with_counts(
         self,
         sort: str = GROUP_DEFAULT_SORT,
@@ -175,6 +313,67 @@ class GroupService:
         rows = list(self.session.scalars(stmt))
         has_more = len(rows) > page_size
         return rows[:page_size], has_more
+
+    def ancestry_levels(self, group: Group) -> list[list[Group]]:
+        """Transitive parents of `group`, bucketed by their longest-path
+        distance from it, nearest level first; name-sorted per level.
+
+        Longest-path placement is what merges reconverging ancestors:
+        `all` is canonically both a direct parent and a grandparent,
+        and lands once at its deepest level instead of at every depth
+        it is reachable at. The path guard keeps the walk terminating
+        even if a cycle ever slipped past the writer.
+        """
+        rows = self.session.execute(
+            select(GroupParent.child_id, GroupParent.parent_id)
+        ).all()
+        parents_of: dict[int, set[int]] = {}
+        for child_id, parent_id in rows:
+            parents_of.setdefault(child_id, set()).add(parent_id)
+
+        depth: dict[int, int] = {}
+
+        def relax(node_id: int, d: int, path: frozenset[int]) -> None:
+            # Skipping non-improving visits is safe: an equal-or-deeper
+            # earlier visit already relaxed this node's ancestors at
+            # least as far.
+            for pid in parents_of.get(node_id, ()):
+                if pid in path:
+                    continue
+                if d + 1 > depth.get(pid, 0):
+                    depth[pid] = d + 1
+                    relax(pid, d + 1, path | {pid})
+
+        relax(group.id, 0, frozenset({group.id}))
+        if not depth:
+            return []
+
+        by_id = {
+            g.id: g
+            for g in self.session.scalars(
+                select(Group).where(Group.id.in_(depth.keys()))
+            )
+        }
+        levels: list[list[Group]] = []
+        for d in range(1, max(depth.values()) + 1):
+            level = sorted(
+                (by_id[gid] for gid, gd in depth.items() if gd == d),
+                key=lambda grp: grp.name,
+            )
+            if level:
+                levels.append(level)
+        return levels
+
+    def children_of(self, group: Group) -> list[Group]:
+        """Direct child groups (one hop down the nesting), name-sorted."""
+        return list(
+            self.session.scalars(
+                select(Group)
+                .join(GroupParent, GroupParent.child_id == Group.id)
+                .where(GroupParent.parent_id == group.id)
+                .order_by(Group.name)
+            )
+        )
 
     def set_description(self, name: str, description: str | None) -> Group:
         """Set or clear a group's free-text description. Raises
