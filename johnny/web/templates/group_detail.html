@@ -16,6 +16,25 @@
   </p>
 </hgroup>
 
+{% if levels %}
+<p>
+  {{ group.name }}
+  {%- for level in levels %} ⊂
+  {%- for g in level %} <a href="{{ url_for('group_detail', group_name=g.name) }}">{{ g.name }}</a>
+  {%- if not loop.last %} /{% endif %}
+  {%- endfor %}
+  {%- endfor %}
+</p>
+{% endif %}
+
+{% if children %}
+<p>child groups:
+  {%- for g in children %} <a href="{{ url_for('group_detail', group_name=g.name) }}">{{ g.name }}</a>
+  {%- if not loop.last %},{% endif %}
+  {%- endfor %}
+</p>
+{% endif %}
+
 {% if group.description %}
 <blockquote>{{ group.description }}</blockquote>
 {% endif %}
