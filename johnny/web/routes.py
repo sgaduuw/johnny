@@ -95,6 +95,8 @@ def register_routes(app: Flask) -> None:
         hosts, has_more = svc.hosts_in(
             group, sort=sort, direction=direction, query=query, page=page
         )
+        levels = svc.ancestry_levels(group)
+        children = svc.children_of(group)
         return render_template(
             _pick_list_template(
                 page,
@@ -109,6 +111,8 @@ def register_routes(app: Flask) -> None:
             query_str=query_str,
             current_sort=sort,
             current_dir=direction,
+            levels=levels,
+            children=children,
         )
 
     @app.route("/h/<fqdn>/")
