@@ -41,6 +41,19 @@ class PlaybookStart(_Strict):
     tags: list[str] = Field(default_factory=list)
     skip_tags: list[str] = Field(default_factory=list)
     check_mode: bool = False
+    # default_factory so pre-callback-0.3.0 plugins (no key sent) parse cleanly
+    # under extra="forbid". Server release MUST land before the plugin
+    # release that emits this field; see CONTEXT.md "Adding a field to
+    # a _Strict wire contract: deploy ordering".
+    groups_topology: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "Parent group name -> its direct child group names, from the "
+            "inventory (inv.groups walk). Server inverts to (child, parent) "
+            "group_parents edges. A parent with an empty list nests nothing "
+            "(prunes server-side). Empty dict from pre-0.3.0 plugins."
+        ),
+    )
 
 
 class HostStatCounts(_Strict):
