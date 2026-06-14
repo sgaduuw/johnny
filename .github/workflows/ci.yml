@@ -1,9 +1,13 @@
 name: CI
 
 on:
-  push:
-    branches: [develop, main, "release/*", "hotfix/*"]
-    tags: ["v*"]
+  # CI is the pull-request gate: the test job (lint + pytest-cov +
+  # migrations) plus a docker build-verify (build the test stage, run
+  # pytest in the image, build the prod stage, no push) on every PR.
+  # It runs on NO branch or tag push. The release image is built +
+  # published by release.yml on v* tags, which trusts this PR gate
+  # rather than re-running anything. (develop is a loose integration
+  # branch; main is the PR-gated release branch.)
   pull_request:
     branches: [develop, main, "release/*", "hotfix/*"]
 
@@ -60,18 +64,18 @@ jobs:
           uv run python -m tests._mig_smoke_assert "$DATABASE_URL"
 
   docker:
+    # Build-verify only: builds the test stage, runs pytest inside the
+    # image, and builds the prod stage (no push). Never logs in or
+    # publishes; release.yml publishes the prod image on v* tags.
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v6
 
       - uses: docker/setup-buildx-action@v4
 
-      # Always build the test stage (loaded into the local docker
-      # daemon) so we can run pytest inside the image.
+      # Build the test stage (loaded into the local docker daemon) so
+      # we can run pytest inside the image.
       - name: Build test stage
         uses: docker/build-push-action@v7
         with:
@@ -85,39 +89,13 @@ jobs:
       - name: Run tests inside the image
         run: docker run --rm johnny:test
 
-      # Auth to GHCR; only on push events (PR builds never push).
-      - name: Login to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Derive image tags:
-      #   main push    -> :latest, :sha-XXXXXXX
-      #   v0.1.0 push  -> :v0.1.0, :0.1.0, :0.1, :sha-XXXXXXX
-      #   PR           -> :pr-N, :sha-XXXXXXX  (built but not pushed)
-      - name: Derive image tags
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/sgaduuw/johnny
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=sha-,format=short
-            type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=ref,event=pr
-
-      - name: Build + push prod stage
+      # Build the prod stage to verify it builds; no push. Publishing
+      # is release.yml's job on v* tags.
+      - name: Build prod stage (verify only, no push)
         uses: docker/build-push-action@v7
         with:
           context: .
           target: prod
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
